@@ -288,10 +288,10 @@ export function createWaterMaterial(opts = {}) {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...commonUniforms(),
-      uDeep: { value: new THREE.Color(0.259, 0.290, 0.184) },
-      uShallow: { value: new THREE.Color(0.541, 0.522, 0.353) },
-      uFoam: { value: new THREE.Color(0.847, 0.831, 0.678) },
-      uStroke: { value: new THREE.Color(0.145, 0.180, 0.121) },
+      uDeep: { value: new THREE.Color(0.224, 0.243, 0.157) },
+      uShallow: { value: new THREE.Color(0.392, 0.376, 0.251) },
+      uFoam: { value: new THREE.Color(0.702, 0.682, 0.529) },
+      uStroke: { value: new THREE.Color(0.145, 0.169, 0.106) },
       uFlow: { value: opts.flow ?? 0.35 },
       uFall: { value: opts.fall ? 1 : 0 },
       uOpacity: { value: 1 },
@@ -321,41 +321,203 @@ export function createWaterMaterial(opts = {}) {
       varying vec3 vWorld;
       varying float vDist;
 
+      // Painted water. Water is the brightest thing in the reference frames:
+      // it holds the sky, breaks into cream where it moves fast, and is cut by
+      // dark strokes that follow the current. It gets its own lighting model
+      // rather than the moss ramp, because a river lit like soil looks like a
+      // plank of wood lying on the ground.
+      vec3 waterLight(vec3 col) {
+        float l = dot(col, vec3(0.299, 0.587, 0.114));
+        col = mix(vec3(l), col, 1.04);
+        col *= 1.02;
+        col += vec3(0.018, 0.022, 0.014);
+        return col;
+      }
+
       void main() {
         float t = uTime;
         vec2 uv = vUv;
-        // cool river water against the warm banks
-        float n1 = vnoise(vec2(uv.x * 26.0, uv.y * 9.0 - t * uFlow * 2.2));
-        float n2 = vnoise(vec2(uv.x * 55.0 + 7.0, uv.y * 20.0 - t * uFlow * 4.4));
-        float sparkle = smoothstep(0.72, 0.92, n1 * 0.6 + n2 * 0.55);
-        float streak = smoothstep(0.55, 0.95, n2);
+        float flow = uv.y - t * uFlow * 0.5;
 
-        // cross-channel depth ramp: pale on the shallows, dark down the middle
+        // low frequency only: high frequency noise aliases into gravel
+        float swell = vnoise(vec2(uv.x * 3.0 - 1.0, flow * 5.0));
+        float current = vnoise(vec2(uv.x * 11.0, flow * 9.0));
+        float chop = vnoise(vec2(uv.x * 21.0 + 5.0, flow * 17.0));
+
         float edge = min(uv.x, 1.0 - uv.x);
-        float depthBand = smoothstep(0.02, 0.30, edge);
-        vec3 col = mix(uShallow, uDeep, depthBand * (0.72 + 0.28 * n1));
-        col = mix(col, uShallow, 0.22 * n2);
-        col += uFoam * sparkle * 0.75;
-        col += uFoam * streak * 0.22;
+        float depthBand = smoothstep(0.0, 0.12, edge);
 
-        // shore foam on the ribbon edges
-        float foam = smoothstep(0.10, 0.0, edge) * (0.45 + 0.35 * sin(uv.y * 60.0 + t * 3.0));
-        col = mix(col, uFoam, clamp(foam, 0.0, 0.62));
+        vec3 col = mix(uShallow, uDeep, depthBand * (0.85 + 0.15 * swell));
+        // the sunlit middle of the current
+        col += uFoam * 0.10 * smoothstep(0.5, 0.95, swell) * depthBand;
+        // long current lines
+        float lines = smoothstep(0.55, 0.95, current * 0.65 + chop * 0.4);
+        col += uFoam * lines * 0.24;
+        // dark brush drag, thin and directional
+        float drag = smoothstep(0.66, 0.94, chop * 0.55 + current * 0.5);
+        col = mix(col, uStroke, drag * 0.45);
+        // sparkles travel with the flow and are hard-edged
+        float glint = smoothstep(0.92, 0.998, chop * 0.6 + current * 0.55);
+        col += uFoam * glint * 0.42;
+        // cream lace along both banks
+        float lace = smoothstep(0.05, 0.0, edge) * (0.45 + 0.55 * vnoise(vec2(uv.y * 26.0 - t * 1.2, 3.0)));
+        col = mix(col, uFoam, clamp(lace, 0.0, 0.42));
 
         if (uFall > 0.5) {
-          // vertical plunges read as pale, streaky curtains of water
-          float streakF = smoothstep(0.25, 0.8, vnoise(vec2(uv.x * 34.0, uv.y * 7.0 - t * 5.0)));
-          col = mix(uShallow, uFoam, 0.35 + streakF * 0.55);
-          col = mix(col, uFoam, smoothstep(0.35, 0.0, uv.y) * 0.3);
+          float vs = vnoise(vec2(uv.x * 18.0, uv.y * 3.0 - t * 3.0));
+          float vs2 = vnoise(vec2(uv.x * 34.0 + 2.0, uv.y * 6.0 - t * 4.6));
+          float curtain = smoothstep(0.32, 0.85, vs * 0.65 + vs2 * 0.5);
+          col = mix(uShallow, uFoam, 0.45 + curtain * 0.5);
+          col = mix(col, uFoam, smoothstep(0.28, 0.0, uv.y) * 0.5);
+          col = mix(col, uStroke, smoothstep(0.6, 0.95, vs2) * 0.16);
         }
 
-        float lum = 0.9 + 0.1 * sin(uTime * 0.8);
-        vec3 lit = mossLight(col * lum, normalize(vec3(0.0, 0.9, 0.3)), 0.95);
+        vec3 lit = waterLight(col);
         lit = applyFog(lit, vDist);
         gl_FragColor = vec4(lit, uOpacity);
       }
     `,
     transparent: false,
+  });
+}
+
+
+// ---------------------------------------------------------------------------
+// River bed — a slightly wider, darker strip under the ribbon. Without it a
+// flat water strip looks like a plank laid on the grass.
+// ---------------------------------------------------------------------------
+export function createRiverbedMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...commonUniforms(),
+      uWet: { value: new THREE.Color(0.212, 0.231, 0.153) },
+      uEdge: { value: new THREE.Color(0.318, 0.290, 0.188) },
+    },
+    vertexShader: /* glsl */`
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying float vDist;
+      void main() {
+        vUv = uv;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        vWorld = wp.xyz;
+        vec4 mv = viewMatrix * wp;
+        vDist = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: COMMON_GLSL + /* glsl */`
+      uniform vec3 uWet;
+      uniform vec3 uEdge;
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying float vDist;
+      void main() {
+        float edge = min(vUv.x, 1.0 - vUv.x);
+        float mid = smoothstep(0.0, 0.35, edge);
+        vec3 col = mix(uEdge, uWet, mid);
+        float wet = vnoise(vWorld.xz * 6.0 + uTime * 0.05);
+        col *= 0.86 + wet * 0.24;
+        // pebbles catching light at the waterline
+        float pebble = smoothstep(0.82, 0.98, vnoise(vWorld.xz * 22.0));
+        col += vec3(0.16, 0.155, 0.12) * pebble * (1.0 - mid * 0.6);
+        vec3 lit = mossLight(col, normalize(vec3(0.0, 1.0, 0.0)), 0.62);
+        lit = applyFog(lit, vDist);
+        gl_FragColor = vec4(lit, 1.0);
+      }
+    `,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Leaf cards — instanced, camera-facing painted quads layered over the solid
+// crowns. This is where the scalloped, brushy silhouette comes from.
+// ---------------------------------------------------------------------------
+export function createLeafCardMaterial(opts = {}) {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...commonUniforms(),
+      uMap: { value: opts.texture || null },
+      uBrightness: { value: opts.brightness ?? 1 },
+      uAlphaTest: { value: opts.alphaTest ?? 0.42 },
+      uSway: { value: opts.sway ?? 0.06 },
+    },
+    side: THREE.DoubleSide,
+    transparent: false,
+    alphaTest: 0,
+    depthWrite: true,
+    vertexShader: /* glsl */`
+      attribute vec3 aOffset;
+      attribute float aSize;
+      attribute float aPhase;
+      uniform float uTime;
+      uniform vec2 uWindDir;
+      uniform vec3 uCamRight;
+      uniform float uWindStrength;
+      uniform float uSway;
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying vec3 vNormalW;
+      varying float vDist;
+      varying float vPhase;
+
+      void main() {
+        vUv = uv;
+        vPhase = aPhase;
+        // card centre in world space
+        vec4 centre = instanceMatrix * vec4(aOffset, 1.0);
+        centre = modelMatrix * centre;
+        float scl = length(instanceMatrix[0].xyz);
+
+        // billboard: the camera never rotates, so right/up are constants
+        vec3 right = uCamRight;
+        vec3 upv = vec3(0.0, 1.0, 0.0);
+        float rot = aPhase * 0.35;
+        float cs = cos(rot), sn = sin(rot);
+        vec2 corner = vec2(position.x * cs - position.y * sn, position.x * sn + position.y * cs);
+        float s = position.z * aSize * scl;
+
+        // slow leaf flutter, one phase per card
+        float gust = sin(uTime * 0.6 + centre.x * 0.11 + centre.z * 0.09) * 0.5 + 0.5;
+        vec3 swayDir = vec3(uWindDir.x, 0.0, uWindDir.y);
+        float flutter = sin(uTime * 1.7 + aPhase * 6.2831 + centre.y) * uSway * (0.4 + gust);
+
+        vec3 wp = centre.xyz + right * corner.x * s + upv * corner.y * s * 0.92;
+        wp += swayDir * flutter * (0.5 + corner.y * 0.5);
+        vWorld = wp;
+        vNormalW = normalize(vec3(0.30, 0.86, 0.41));
+        vec4 mv = viewMatrix * vec4(wp, 1.0);
+        vDist = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: COMMON_GLSL + /* glsl */`
+      uniform sampler2D uMap;
+      uniform float uBrightness;
+      uniform float uAlphaTest;
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying vec3 vNormalW;
+      varying float vDist;
+      varying float vPhase;
+
+      void main() {
+        vec4 tex = texture2D(uMap, vUv);
+        if (tex.a < uAlphaTest) discard;
+        vec3 albedo = tex.rgb;
+        // a little sun-side lift so cards are not flat stamps
+        float lift = smoothstep(0.2, 0.9, vUv.y) * 0.16 + vPhase * 0.06;
+        albedo *= uBrightness + lift;
+        vec3 n = normalize(vNormalW);
+        // soft self-shading across the card face
+        float ao = 0.72 + 0.28 * smoothstep(0.15, 0.85, vUv.y);
+        vec3 col = mossLight(albedo, n, ao);
+        // alpha-to-coverage-ish softening: blend the edge toward the card colour
+        col = mix(col, col * 0.86, (1.0 - smoothstep(uAlphaTest, uAlphaTest + 0.25, tex.a)));
+        col = applyFog(col, vDist);
+        gl_FragColor = vec4(col, 1.0);
+      }
+    `,
   });
 }
 
