@@ -52,9 +52,10 @@ vec3 mossLight(vec3 albedo, vec3 n, float ao) {
   float b1 = smoothstep(0.395, 0.445, ndl);
   float b2 = smoothstep(0.560, 0.610, ndl);
   float b3 = smoothstep(0.735, 0.790, ndl);
-  float shade = 0.055 + 0.26 * b1 + 0.22 * b2 + 0.20 * b3;
+  float shade = 0.050 + 0.29 * b1 + 0.25 * b2 + 0.25 * b3;
   float aoA = mix(0.34, 1.0, ao);
-  vec3 amb = uAmbient * aoA * (0.74 + 0.26 * nn.y);
+  // shadow is cool, not just dark: a blue-green wash keeps the darks alive
+  vec3 amb = uAmbient * aoA * (0.74 + 0.26 * nn.y) * vec3(0.90, 1.00, 1.14);
   vec3 sun = uSunColor * shade * mix(0.26, 1.0, ao);
   vec3 col = albedo * (amb + sun);
   // camera fill: the fixed camera looks down from the south, so anything
@@ -69,7 +70,7 @@ vec3 mossLight(vec3 albedo, vec3 n, float ao) {
   col += albedo * vec3(0.035, 0.052, 0.065) * rim;
   // cool bounce into the shadow band, warm kiss on the top band
   col += vec3(0.010, 0.022, 0.036) * (1.0 - b1) * aoA;
-  col += vec3(0.040, 0.032, 0.014) * b3 * max(0.0, nn.y);
+  col += vec3(0.062, 0.048, 0.016) * b3 * max(0.0, nn.y);
   // painted saturation — the reference art is richer than a physical model
   float l = dot(col, vec3(0.299, 0.587, 0.114));
   col = mix(vec3(l), col, 1.12);
@@ -158,7 +159,10 @@ function commonUniforms() {
 // ---------------------------------------------------------------------------
 export function createTerrainMaterial() {
   return new THREE.ShaderMaterial({
-    uniforms: commonUniforms(),
+    uniforms: {
+      ...commonUniforms(),
+      uGround: { value: null },
+    },
     vertexShader: /* glsl */`
       attribute vec3 aColor;
       attribute float aAO;
@@ -179,11 +183,23 @@ export function createTerrainMaterial() {
       }
     `,
     fragmentShader: COMMON_GLSL + /* glsl */`
+      uniform sampler2D uGround;
       varying vec3 vColor;
       varying float vAO;
       varying float vDist;
       varying vec3 vWorld;
       varying vec3 vNormalW;
+
+      // The painted ground tile is mid-grey, so (sample * 2 - 1) is a signed
+      // brush offset. Two octaves: a broad one that reads as dabs of paint at
+      // walking distance, a finer one that reads as grain up close.
+      float groundPaint(vec2 p, float fade) {
+        if (fade < 0.01) return 0.0;
+        float a = texture2D(uGround, p * 0.42).r * 2.0 - 1.0;
+        float b = texture2D(uGround, p * 1.55 + vec2(0.37, 0.19)).r * 2.0 - 1.0;
+        float c = texture2D(uGround, p * 4.1 + vec2(0.71, 0.53)).r * 2.0 - 1.0;
+        return (a * 0.52 + b * 0.31 + c * 0.17) * fade;
+      }
 
       void main() {
         vec3 n = normalize(vNormalW);
@@ -223,6 +239,24 @@ export function createTerrainMaterial() {
         float steep = smoothstep(0.16, 0.55, slope);
         albedo *= mix(1.0, 0.74, steep);
         albedo = mix(albedo, albedo * vec3(0.86, 0.88, 0.96), steep * 0.5);
+
+        // --- painted ground tile -------------------------------------------
+        // The brushwork is what makes the ground read as a painting rather than
+        // a fill. It rides on top of the washes above, only where grass grows,
+        // and fades out with distance so it never turns into noise.
+        float gtext = groundPaint(p, fade);
+        float grassy = smoothstep(0.02, 0.30, greenish);
+        albedo *= 1.0 + gtext * (0.30 * grassy + 0.14 * (1.0 - grassy));
+        albedo += vec3(0.012, 0.016, 0.006) * gtext * grassy;
+
+        // --- sun pools: the light breaking through the canopy --------------
+        // Big soft warm patches with hard-ish edges. This is the single thing
+        // that makes a meadow look painted rather than evenly lit.
+        float dap = vnoise(p * 0.085 + 11.0) * 0.62 + vnoise(p * 0.205 - 5.0) * 0.38;
+        float sunlit = smoothstep(0.50, 0.84, dap) * (0.45 + 0.55 * n.y);
+        albedo += vec3(0.085, 0.082, 0.030) * sunlit * greenish;
+        // and the cool shadow side of those pools
+        albedo *= 1.0 - 0.10 * smoothstep(0.34, 0.10, dap) * greenish;
 
         // --- the painting's paper tooth -----------------------------------
         float tooth = vnoise(p * 9.0) * 0.6 + vnoise(p * 3.1) * 0.4;
@@ -348,20 +382,28 @@ export function createWaterMaterial(opts = {}) {
         float depthBand = smoothstep(0.0, 0.12, edge);
 
         vec3 col = mix(uShallow, uDeep, depthBand * (0.85 + 0.15 * swell));
-        // the sunlit middle of the current
-        col += uFoam * 0.10 * smoothstep(0.5, 0.95, swell) * depthBand;
-        // long current lines
+        // --- long reflections: the trees on the far bank are dragged down
+        // the surface as soft dark columns. In the reference the river is
+        // mostly reflection, not sky.
+        vec2 rp = vec2(uv.x * 1.6, flow * 0.55);
+        float refl = vnoise(rp) * 0.55 + vnoise(rp * 2.3 + 7.0) * 0.3 + vnoise(rp * 5.1 - 3.0) * 0.15;
+        float columns = smoothstep(0.34, 0.78, refl);
+        col = mix(col, uStroke * 1.15, columns * 0.42 * (0.35 + 0.65 * depthBand));
+        // the sunlit middle of the current, warm and pale
+        col += uFoam * 0.14 * smoothstep(0.5, 0.95, swell) * depthBand;
+        col = mix(col, uFoam * 1.04, smoothstep(0.72, 0.95, swell) * 0.22);
+        // --- long current lines
         float lines = smoothstep(0.55, 0.95, current * 0.65 + chop * 0.4);
-        col += uFoam * lines * 0.24;
-        // dark brush drag, thin and directional
+        col += uFoam * lines * 0.26;
+        // --- dark brush drag, thin and directional
         float drag = smoothstep(0.66, 0.94, chop * 0.55 + current * 0.5);
-        col = mix(col, uStroke, drag * 0.45);
-        // sparkles travel with the flow and are hard-edged
+        col = mix(col, uStroke, drag * 0.40);
+        // --- sparkles travel with the flow and are hard-edged
         float glint = smoothstep(0.92, 0.998, chop * 0.6 + current * 0.55);
-        col += uFoam * glint * 0.42;
-        // cream lace along both banks
-        float lace = smoothstep(0.05, 0.0, edge) * (0.45 + 0.55 * vnoise(vec2(uv.y * 26.0 - t * 1.2, 3.0)));
-        col = mix(col, uFoam, clamp(lace, 0.0, 0.42));
+        col += uFoam * glint * 0.55;
+        // --- cream lace along both banks
+        float lace = smoothstep(0.06, 0.0, edge) * (0.45 + 0.55 * vnoise(vec2(uv.y * 26.0 - t * 1.2, 3.0)));
+        col = mix(col, uFoam, clamp(lace, 0.0, 0.55));
 
         if (uFall > 0.5) {
           float vs = vnoise(vec2(uv.x * 18.0, uv.y * 3.0 - t * 3.0));

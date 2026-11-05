@@ -41,8 +41,12 @@ export class WaterSystem {
       dx /= len; dz /= len;
       const nx = -dz, nz = dx;
       // the carved channel is a little wider than the water: keep the ribbon
-      // inside it so no part of the surface is bitten off by the bank
-      const half = s.width * 0.30;
+      // inside it so no part of the surface is bitten off by the bank.
+      // The width breathes along the river — a constant width reads as a
+      // painted stripe, real water opens into pools and pinches at riffles.
+      const wob = Math.sin(dist * 0.34 + Math.cos(dist * 0.13) * 2.1) * 0.5
+        + Math.sin(dist * 0.91 - 1.3) * 0.25;
+      const half = s.width * (0.30 + wob * 0.055);
       const step = Math.hypot(s.x - prev.x, s.z - prev.z);
       dist += step;
       current.push({

@@ -17,7 +17,7 @@ import {
 } from './propsGeo.js';
 import {
   grassTuftGeometry, fernGeometry, bushGeometry, canopyGeometry,
-  pineGeometry, mushroomGeometry, leafCardSet,
+  pineGeometry, mushroomGeometry, leafCardSet, flowerGeometry, FLOWER_KINDS,
 } from './plants.js';
 
 const P = PALETTE;
@@ -82,9 +82,9 @@ export class Vegetation {
 
     // ------------------------------------------------------------ grass tufts
     const tuftGeos = [
-      grassTuftGeometry({ blades: 4, height: 0.58, spread: 0.15, seed: 2 }),
-      grassTuftGeometry({ blades: 5, height: 0.46, spread: 0.12, seed: 7 }),
-      grassTuftGeometry({ blades: 3, height: 0.72, spread: 0.17, seed: 13 }),
+      grassTuftGeometry({ blades: 6, height: 0.56, spread: 0.15, seed: 2 }),
+      grassTuftGeometry({ blades: 7, height: 0.44, spread: 0.12, seed: 7 }),
+      grassTuftGeometry({ blades: 5, height: 0.70, spread: 0.17, seed: 13 }),
     ];
     const tuftBatches = tuftGeos.map((g, i) => new SolidBatch(g, leafMat, `grass${i}`));
     // the grass carpet is the biggest vertex budget: thin it on weak devices
@@ -136,6 +136,59 @@ export class Vegetation {
       );
     }
 
+    // ---------------------------------------------------------------- flowers
+    // Meadow flowers clump: a lone dot in a field of grass reads as noise, a
+    // drift of eight reads as a patch of flowers.
+    const flowerBatches = FLOWER_KINDS.map(
+      (k) => new SolidBatch(flowerGeometry(k.seed, k), leafMat, `flowers-${k.id}`),
+    );
+    const flowerSeat = [];
+    for (const t of props.tufts) flowerSeat.push(t);
+    for (let i = flowerSeat.length - 1; i > 0; i--) {
+      const j = (Math.random() * (i + 1)) | 0;
+      const tmp = flowerSeat[i];
+      flowerSeat[i] = flowerSeat[j];
+      flowerSeat[j] = tmp;
+    }
+    const drifts = Math.min(150, Math.floor(flowerSeat.length / 46));
+    let flowerBudget = QUALITY.level >= 2 ? 1500 : 900;
+    for (let d = 0; d < drifts && flowerBudget > 0; d++) {
+      const seat = flowerSeat[(d * 37) % flowerSeat.length];
+      const kind = (Math.random() * FLOWER_KINDS.length) | 0;
+      const inPatch = 4 + ((Math.random() * 7) | 0);
+      for (let k = 0; k < inPatch && flowerBudget > 0; k++) {
+        flowerBudget--;
+        const rad = 0.28 + Math.random() * 0.85;
+        const ang = Math.random() * TWO_PI;
+        const x = seat.x + Math.cos(ang) * rad;
+        const z = seat.z + Math.sin(ang) * rad;
+        const y = this.world.heightAt ? this.world.heightAt(x, z) : seat.y;
+        const s = 0.72 + Math.random() * 0.7;
+        e.set(0, Math.random() * TWO_PI, 0);
+        q.setFromEuler(e);
+        flowerBatches[kind].add(
+          new THREE.Vector3(x, y - 0.02, z),
+          new THREE.Vector3(s, s * (0.85 + Math.random() * 0.5), s),
+          q.clone(), [Math.random() * TWO_PI, 0.012],
+        );
+      }
+    }
+
+    // ---------------------------------------------------------------- pebbles
+    // Scatter small stones through the grass and along the worn path. They give
+    // the eye something to read scale against.
+    const pebbleBatch = new SolidBatch(rockGeometry(7), createInstancedSolidMaterial(), 'pebbles');
+    for (const t of flowerSeat) {
+      if (Math.random() > 0.035) continue;
+      const s = 0.055 + Math.random() * 0.12;
+      e.set(Math.random() * 0.6, Math.random() * TWO_PI, Math.random() * 0.6);
+      q.setFromEuler(e);
+      pebbleBatch.add(
+        new THREE.Vector3(t.x + (Math.random() - 0.5) * 0.5, t.y - s * 0.4, t.z + (Math.random() - 0.5) * 0.5),
+        new THREE.Vector3(s * 1.4, s, s * 1.3), q.clone(),
+      );
+    }
+
     // --------------------------------------------------------------- bushes
     const bushGeos = [bushGeometry(3), bushGeometry(8)];
     const bushBatches = bushGeos.map((g, i) => new SolidBatch(g, solidMat, `bushes${i}`));
@@ -182,6 +235,13 @@ export class Vegetation {
       pineGeometry({ layers: 8, seed: 12 }),
     ];
     const pineBatches = pineGeos.map((g, i) => new SolidBatch(g, solidMat, `pines${i}`));
+    // pines get their own cards: a needle mass that breaks the cone silhouette
+    const pineCardMat = createLeafCardMaterial({
+      texture: leafTexture('canopyC'), brightness: 0.98, alphaTest: 0.40,
+    });
+    const pineCards = new SolidBatch(
+      leafCardSet({ count: 7, radius: 0.95, seed: 31, size: 0.52 }), pineCardMat, 'pineCards',
+    );
 
     for (const t of props.trees) {
       const s = t.scale;
@@ -224,6 +284,11 @@ export class Vegetation {
           new THREE.Vector3(t.x, t.y - 0.05, t.z),
           new THREE.Vector3(radius, trunkH * 1.12, radius),
           q.clone(), [t.swayPhase, 0.006],
+        );
+        pineCards.add(
+          new THREE.Vector3(t.x, t.y + trunkH * 0.56, t.z),
+          new THREE.Vector3(radius * 0.92, trunkH * 0.78, radius * 0.92),
+          q.clone(), [t.swayPhase, 0.0],
         );
         this.nodes.trees.push({
           x: t.x, y: t.y, z: t.z, r: 0.7 * s, id: t.id, kind: 'tree', trunkH,
@@ -283,11 +348,13 @@ export class Vegetation {
     this.batches = {
       tuftBatches, fernBatches, bushBatches, canopyBatches, pineBatches,
       trunkBatch, capBatch, logBatch, stumpBatch, rockBatches, mushroomBatch,
-      bushCards, canopyCards,
+      bushCards, canopyCards, pineCards, pebbleBatch, flowerBatches,
     };
+    this.flowerBatches = flowerBatches;
     for (const b of [
       ...tuftBatches, ...fernBatches, ...bushBatches, ...canopyBatches, ...pineBatches,
       trunkBatch, ...rockBatches, capBatch, logBatch, stumpBatch, mushroomBatch,
+      pebbleBatch, pineCards, ...flowerBatches,
       bushCards, ...canopyCards,
     ]) {
       this.meshes.push(b.build(this.scene));

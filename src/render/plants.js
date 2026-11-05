@@ -262,37 +262,126 @@ export function canopyGeometry(seed = 11) {
 // ---------------------------------------------------------------------------
 // Pines — stacked needle skirts with a jagged rim
 // ---------------------------------------------------------------------------
-export function pineGeometry({ layers = 7, seed = 5, height = 2.0, radius = 1.0 } = {}) {
+export function pineGeometry({ layers = 8, seed = 5, height = 2.0, radius = 1.0 } = {}) {
   const p = new Painter();
-  const seg = 11;
   for (let i = 0; i < layers; i++) {
     const t = i / (layers - 1);
-    const y = height * (0.12 + t * 0.82);
-    const r = radius * (1 - t * 0.78) * (0.85 + hash(seed, i, 1) * 0.3);
-    const drop = height * (0.10 + (1 - t) * 0.10);
-    // a ring of triangles, alternating long/short so the rim is jagged
-    for (let k = 0; k < seg; k++) {
-      const a0 = (k / seg) * Math.PI * 2 + i * 0.42;
-      const a1 = ((k + 1) / seg) * Math.PI * 2 + i * 0.42;
-      const long = k % 2 === 0;
-      const out = long ? 1.0 : 0.72;
-      const yTip = y - drop * (long ? 1.25 : 0.8);
-      const r0 = r * out, r1 = r * (long ? 0.72 : 1.0);
-      const tipCol = mix(P.pineMid, P.pineLight, long ? 0.55 : 0.2);
-      const inCol = P.pineDark;
-      const apex = [0, y + height * 0.045, 0];
-      const pa = [Math.cos(a0) * r0, yTip, Math.sin(a0) * r0];
-      const pb = [Math.cos(a1) * r1, yTip - drop * 0.15, Math.sin(a1) * r1];
-      p.tri(apex, pa, pb, mix(inCol, tipCol, 0.35), tipCol, tipCol);
-      // underside kept very dark: the reference keeps pine bells in shadow
+    const y = height * (0.10 + t * 0.84);
+    const r = radius * (1 - t * 0.80) * (0.86 + hash(seed, i, 1) * 0.28);
+    const drop = height * (0.09 + (1 - t) * 0.10);
+    // Each layer is a ring of narrow, drooping needle blades with gaps between
+    // them — a solid cone reads as a paper cut-out from the fixed camera, but
+    // a fringed skirt catches light on some blades and leaves the rest in
+    // shadow, which is what a pine looks like in the paintings.
+    const blades = 15 + ((i * 5) % 4);
+    for (let k = 0; k < blades; k++) {
+      const h1 = hash(seed, i, k, 1);
+      const a = (k / blades) * Math.PI * 2 + i * 0.47 + h1 * 0.22;
+      const halfW = (0.085 + h1 * 0.075) * Math.PI;   // angular width of the blade
+      const len = r * (0.78 + hash(seed, i, k, 2) * 0.42);
+      const tipY = y - drop * (0.7 + hash(seed, i, k, 3) * 0.9);
+      const odd = k % 2 === 0;
+      const tipCol = scale3(
+        mix(P.pineMid, P.pineLight, odd ? 0.62 : 0.18),
+        0.92 + h1 * 0.18,
+      );
+      const rootCol = mix(P.pineDark, P.pineMid, 0.25);
+      const a0 = a - halfW, a1 = a + halfW;
+      const inner = 0.015 + r * 0.06;
+      const c = [Math.cos(a) * len, tipY, Math.sin(a) * len];
       p.tri(
-        [0, y - drop * 0.55, 0], pb, pa,
-        scale3(inCol, 0.72), scale3(tipCol, 0.55), scale3(tipCol, 0.55),
+        [Math.cos(a0) * inner, y + height * 0.03, Math.sin(a0) * inner],
+        c,
+        [Math.cos(a1) * inner, y + height * 0.03, Math.sin(a1) * inner],
+        rootCol, tipCol, rootCol,
+      );
+      // underside: a darker, shorter blade underneath, offset back
+      p.tri(
+        [Math.cos(a0) * inner * 2.0, y - drop * 0.55, Math.sin(a0) * inner * 2],
+        [Math.cos(a) * len * 0.78, tipY - drop * 0.35, Math.sin(a) * len * 0.78],
+        [Math.cos(a1) * inner * 2, y - drop * 0.55, Math.sin(a1) * inner * 2],
+        scale3(rootCol, 0.66), scale3(tipCol, 0.52), scale3(rootCol, 0.66),
       );
     }
   }
-  return biasNormals(p.build(), 0.45);
+  return biasNormals(p.build(), 0.40);
 }
+
+// ---------------------------------------------------------------------------
+// Flowers
+// ---------------------------------------------------------------------------
+/**
+ * A tiny meadow flower: one bent stem and a ring of petals seen from above.
+ *
+ * Only a handful of triangles each, but they are the single cheapest way to
+ * break a big green field into something you want to walk through — the
+ * reference paintings are full of pale specks in the grass.
+ */
+export function flowerGeometry(seed = 3, opts = {}) {
+  const {
+    petals = 6,
+    petalCol = [0.92, 0.93, 0.84],
+    heartCol = [0.86, 0.72, 0.32],
+    stemH = 0.26 + (seed % 3) * 0.05,
+  } = opts;
+  const p = new Painter();
+  const lean = (hash(seed, 1) - 0.5) * 0.16;
+
+  // stem: a thin tapered blade so it catches the light like grass
+  addBlade(p, {
+    angle: hash(seed, 2) * 0.8 - 0.4,
+    lean,
+    height: stemH,
+    width: 0.014,
+    curve: lean * 0.5,
+    base: [0, 0, 0],
+    cBase: scale3(P.grassDeep, 0.9),
+    cMid: scale3(P.grassMid, 0.98),
+    cTip: scale3(P.grassMid, 1.05),
+    seed: seed * 3.1,
+  });
+
+  // petals: a shallow disc of triangles around the head
+  const head = [lean * 0.7, stemH, 0];
+  const r = 0.075 + (seed % 4) * 0.008;
+  const yaw = hash(seed, 5) * Math.PI * 2;
+  for (let i = 0; i < petals; i++) {
+    const a0 = yaw + (i / petals) * Math.PI * 2;
+    const a1 = a0 + (Math.PI * 2) / petals * 0.72;
+    const am = (a0 + a1) * 0.5;
+    const inner = 0.02;
+    const tipR = r * (0.82 + hash(seed, i, 7) * 0.4);
+    const lift = 0.012;
+    const shade = (i % 2 === 0 ? 1.0 : 0.9);
+    const c = scale3(petalCol, shade);
+    p.tri(
+      [head[0] + Math.cos(a0) * inner, head[1], head[2] + Math.sin(a0) * inner],
+      [head[0] + Math.cos(am) * tipR, head[1] + lift, head[2] + Math.sin(am) * tipR],
+      [head[0] + Math.cos(a1) * inner, head[1], head[2] + Math.sin(a1) * inner],
+      c, scale3(c, 1.06), c,
+    );
+  }
+  // heart
+  const heartR = r * 0.34;
+  for (let i = 0; i < 4; i++) {
+    const a0 = yaw + (i / 4) * Math.PI * 2;
+    const a1 = a0 + Math.PI / 2;
+    p.tri(
+      [head[0], head[1] + 0.02, head[2]],
+      [head[0] + Math.cos(a0) * heartR, head[1] + 0.016, head[2] + Math.sin(a0) * heartR],
+      [head[0] + Math.cos(a1) * heartR, head[1] + 0.016, head[2] + Math.sin(a1) * heartR],
+      heartCol, heartCol, heartCol,
+    );
+  }
+  return biasNormals(p.build(), 0.7);
+}
+
+/** The three meadow flowers: bone-white, warm yellow, soft violet. */
+export const FLOWER_KINDS = [
+  { id: 'white', petalCol: [0.90, 0.91, 0.82], heartCol: [0.80, 0.66, 0.28], seed: 3 },
+  { id: 'yellow', petalCol: [0.88, 0.80, 0.36], heartCol: [0.62, 0.44, 0.16], seed: 11 },
+  { id: 'violet', petalCol: [0.72, 0.64, 0.84], heartCol: [0.82, 0.74, 0.42], seed: 19 },
+];
 
 // ---------------------------------------------------------------------------
 // Mushrooms

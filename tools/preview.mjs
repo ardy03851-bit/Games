@@ -40,7 +40,7 @@ const { generateWorld, PALETTE } = await import('../src/terrain/terrain.js');
 const { buildTerrainMesh } = await import('../src/render/terrainMesh.js');
 const { Vegetation } = await import('../src/render/vegetation.js');
 const { WaterSystem } = await import('../src/render/water.js');
-const { sampleTexture } = await import('../src/render/textures.js');
+const { sampleTexture, groundTexture } = await import('../src/render/textures.js');
 
 const P = PALETTE;
 const world = generateWorld(seed);
@@ -113,6 +113,7 @@ const AMB = [0.35, 0.39, 0.34];
 const FOG = [0.62, 0.63, 0.52];
 const VIEWDIR = [0, -0.83, -0.55];
 const CAMRIGHT = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+const WIND = new THREE.Vector3(0.80, 0, 0.60).normalize(); // matches uWindDir
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const smoothstep = (a, b, x) => { const t = clamp01((x - a) / (b - a)); return t * t * (3 - 2 * t); };
@@ -139,20 +140,21 @@ function light(col, n, ao = 0.9) {
   const b1 = smoothstep(0.395, 0.445, d0);
   const b2 = smoothstep(0.560, 0.610, d0);
   const b3 = smoothstep(0.735, 0.790, d0);
-  const shade = (0.055 + 0.26 * b1 + 0.22 * b2 + 0.20 * b3) * (0.40 + 0.6 * ao);
+  const shade = (0.050 + 0.29 * b1 + 0.25 * b2 + 0.25 * b3) * (0.40 + 0.6 * ao);
   const amb = 0.34 * (0.55 + 0.45 * ao);
   const fillD = n.x * -VIEWDIR[0] + n.y * -VIEWDIR[1] + n.z * -VIEWDIR[2];
   const fill = clamp01(fillD * 0.5 + 0.5);
   const wall = 1 - 0.78 * Math.max(0, Math.min(1, n.y));
   const fk = 0.55 * fill * fill * wall;
-  const r = col[0] * (AMB[0] * (amb + fk) + SUNCOL[0] * shade);
-  const g = col[1] * (AMB[1] * (amb + fk) + SUNCOL[1] * shade);
-  const b = col[2] * (AMB[2] * (amb + fk) + SUNCOL[2] * shade);
+  const ambK = [AMB[0] * 0.90, AMB[1] * 1.00, AMB[2] * 1.14];
+  const r = col[0] * (ambK[0] * (amb + fk) + SUNCOL[0] * shade);
+  const g = col[1] * (ambK[1] * (amb + fk) + SUNCOL[1] * shade);
+  const b = col[2] * (ambK[2] * (amb + fk) + SUNCOL[2] * shade);
   const l = 0.3333 * (r + g + b);
   return [
-    l + (r - l) * 1.10 + 0.010 * (1 - b1) * ao,
-    l + (g - l) * 1.10 + 0.022 * (1 - b1) * ao,
-    l + (b - l) * 1.10 + 0.036 * (1 - b1) * ao,
+    l + (r - l) * 1.10 + 0.010 * (1 - b1) * ao + 0.062 * b3 * Math.max(0, n.y),
+    l + (g - l) * 1.10 + 0.022 * (1 - b1) * ao + 0.048 * b3 * Math.max(0, n.y),
+    l + (b - l) * 1.10 + 0.036 * (1 - b1) * ao + 0.016 * b3 * Math.max(0, n.y),
   ];
 }
 
@@ -185,6 +187,26 @@ function groundDetailJS(px, pz, sx, sz, fade, greenish) {
   ];
 }
 
+let GROUND_TEX = null;
+try {
+  GROUND_TEX = groundTexture();
+} catch {
+  GROUND_TEX = null;
+}
+const wrapSample = (u, v) => {
+  const uu = ((u % 1) + 1) % 1;
+  const vv = ((v % 1) + 1) % 1;
+  return sampleTexture(GROUND_TEX, uu, vv)[0];
+};
+
+function groundPaintJS(p, fade) {
+  if (fade < 0.01) return 0;
+  const a = wrapSample(p[0] * 0.42, p[1] * 0.42) * 2 - 1;
+  const b = wrapSample(p[0] * 1.55 + 0.37, p[1] * 1.55 + 0.19) * 2 - 1;
+  const c = wrapSample(p[0] * 4.1 + 0.71, p[1] * 4.1 + 0.53) * 2 - 1;
+  return (a * 0.52 + b * 0.31 + c * 0.17) * fade;
+}
+
 function terrainShade(wx, wz, nx, ny, nz, col, ao, dist) {
   const fade = smoothstep(96, 22, dist);
   const len = Math.hypot(nx, ny, nz) || 1;
@@ -212,6 +234,16 @@ function terrainShade(wx, wz, nx, ny, nz, col, ao, dist) {
   const steep = smoothstep(0.16, 0.55, slope);
   r *= 1 - 0.26 * steep; g *= 1 - 0.26 * steep; b *= 1 - 0.26 * steep;
   r += (r * -0.14) * steep * 0.5; g += (g * -0.12) * steep * 0.5; b += (b * -0.04) * steep * 0.5;
+  const gtext = groundPaintJS([wx, wz], fade);
+  const grassy = smoothstep(0.02, 0.30, g - r);
+  const gk = 1 + gtext * (0.30 * grassy + 0.14 * (1 - grassy));
+  r *= gk; g *= gk; b *= gk;
+  r += 0.012 * gtext * grassy; g += 0.016 * gtext * grassy; b += 0.006 * gtext * grassy;
+  const dap = vnoise(wx * 0.085 + 11, wz * 0.085 + 11) * 0.62 + vnoise(wx * 0.205 - 5, wz * 0.205 - 5) * 0.38;
+  const sunlit = smoothstep(0.50, 0.84, dap) * (0.45 + 0.55 * ny);
+  r += 0.085 * sunlit * greenish; g += 0.082 * sunlit * greenish; b += 0.030 * sunlit * greenish;
+  const dk = 1 - 0.10 * smoothstep(0.34, 0.10, dap) * greenish;
+  r *= dk; g *= dk; b *= dk;
   const tooth = vnoise(wx * 9, wz * 9) * 0.6 + vnoise(wx * 3.1, wz * 3.1) * 0.4;
   r *= 0.975 + tooth * 0.05; g *= 0.975 + tooth * 0.05; b *= 0.975 + tooth * 0.05;
   return light([r, g, b], { x: nx, y: ny, z: nz }, ao);
@@ -219,12 +251,22 @@ function terrainShade(wx, wz, nx, ny, nz, col, ao, dist) {
 
 // ---- collect drawables ---------------------------------------------------
 const clusters = [];
+const decalClusters = [];
 const seen = new Set();
 function collect(obj, parentMatrix) {
   obj.updateMatrixWorld?.(false);
   const m = new THREE.Matrix4().multiplyMatrices(parentMatrix, new THREE.Matrix4().copy(obj.matrixWorld || new THREE.Matrix4()));
   const mat = obj.material;
   const isDecal = !!(mat && (mat.map || /shadow|decal|ghost/i.test(obj.name || '')));
+  if (obj.isMesh && obj.geometry && isDecal) {
+    const inst = obj.isInstancedMesh ? obj.count : 1;
+    const mats = [];
+    for (let i = 0; i < inst; i++) {
+      obj.isInstancedMesh ? obj.getMatrixAt(i, worldMatTmp) : worldMatTmp.identity();
+      mats.push(new THREE.Matrix4().multiplyMatrices(m, worldMatTmp));
+    }
+    decalClusters.push({ geo: obj.geometry, mats, name: obj.name, opacity: mat.opacity ?? 0.5, color: mat.color ? [mat.color.r, mat.color.g, mat.color.b] : [0.06, 0.08, 0.06] });
+  }
   if (obj.isMesh && obj.geometry && !isDecal) {
     const inst = obj.isInstancedMesh ? obj.count : 1;
     const mats = [];
@@ -266,6 +308,18 @@ function project(p, o) {
 const pa = {}, pb = {}, pc = {};
 
 function shadePixel(A, B, C, w0, w1, w2, mode, idxp) {
+  if (mode.kind === 'decal') {
+    const u = A.uv[0] * w0 + B.uv[0] * w1 + C.uv[0] * w2;
+    const v = A.uv[1] * w0 + B.uv[1] * w1 + C.uv[1] * w2;
+    const d = Math.hypot(u - 0.5, v - 0.5) * 2;
+    if (d >= 1) return;
+    const grad = d < 0.55 ? 0.85 + (0.45 - 0.85) * (d / 0.55) : 0.45 * (1 - (d - 0.55) / 0.45);
+    const a = Math.max(0, grad) * mode.opacity;
+    img[idxp * 3] += (mode.color[0] - img[idxp * 3]) * a;
+    img[idxp * 3 + 1] += (mode.color[1] - img[idxp * 3 + 1]) * a;
+    img[idxp * 3 + 2] += (mode.color[2] - img[idxp * 3 + 2]) * a;
+    return;
+  }
   if (mode.kind === 'bed') {
     const u = A.uv[0] * w0 + B.uv[0] * w1 + C.uv[0] * w2;
     const edge = Math.min(u, 1 - u);
@@ -306,15 +360,23 @@ function shadePixel(A, B, C, w0, w1, w2, mode, idxp) {
     let r = shallow[0] + (deep[0] - shallow[0]) * depthBand * (0.85 + 0.15 * swell);
     let g = shallow[1] + (deep[1] - shallow[1]) * depthBand * (0.85 + 0.15 * swell);
     let b = shallow[2] + (deep[2] - shallow[2]) * depthBand * (0.85 + 0.15 * swell);
-    const warm = 0.16 * smoothstep(0.5, 0.95, swell) * depthBand;
+    const rp0 = u * 1.6, rp1 = flow * 0.55;
+    const refl = vnoise(rp0, rp1) * 0.55 + vnoise(rp0 * 2.3 + 7, rp1 * 2.3 + 7) * 0.3 + vnoise(rp0 * 5.1 - 3, rp1 * 5.1 - 3) * 0.15;
+    const columns = smoothstep(0.34, 0.78, refl) * 0.42 * (0.35 + 0.65 * depthBand);
+    r += (stroke[0] * 1.15 - r) * columns;
+    g += (stroke[1] * 1.15 - g) * columns;
+    b += (stroke[2] * 1.15 - b) * columns;
+    const warm = 0.14 * smoothstep(0.5, 0.95, swell) * depthBand;
     r += foam[0] * warm; g += foam[1] * warm; b += foam[2] * warm;
-    const lines = smoothstep(0.55, 0.95, current * 0.65 + chop * 0.4) * 0.30;
+    const sky = smoothstep(0.72, 0.95, swell) * 0.22;
+    r += (foam[0] * 1.04 - r) * sky; g += (foam[1] * 1.04 - g) * sky; b += (foam[2] * 1.04 - b) * sky;
+    const lines = smoothstep(0.55, 0.95, current * 0.65 + chop * 0.4) * 0.26;
     r += foam[0] * lines; g += foam[1] * lines; b += foam[2] * lines;
-    const drag = smoothstep(0.66, 0.94, chop * 0.55 + current * 0.5) * 0.30;
+    const drag = smoothstep(0.66, 0.94, chop * 0.55 + current * 0.5) * 0.40;
     r += (stroke[0] - r) * drag; g += (stroke[1] - g) * drag; b += (stroke[2] - b) * drag;
-    const glint = smoothstep(0.90, 0.995, chop * 0.6 + current * 0.55) * 0.9;
+    const glint = smoothstep(0.92, 0.998, chop * 0.6 + current * 0.55) * 0.55;
     r += foam[0] * glint; g += foam[1] * glint; b += foam[2] * glint;
-    const lace = smoothstep(0.05, 0.0, edge) * (0.45 + 0.55 * vnoise(v * 26 - time * 1.2, 3)) * 0.42;
+    const lace = smoothstep(0.06, 0.0, edge) * (0.45 + 0.55 * vnoise(v * 26 - time * 1.2, 3)) * 0.55;
     r += (foam[0] - r) * lace; g += (foam[1] - g) * lace; b += (foam[2] - b) * lace;
     // water light
     const lw = 0.299 * r + 0.587 * g + 0.114 * b;
@@ -358,6 +420,11 @@ function drawTri(A, B, C, mode) {
       if (w2 < -0.002) continue;
       const z = w0 * pa.z + w1 * pb.z + w2 * pc.z;
       const idxp = y * W + x;
+      if (mode.kind === 'decal') {
+        if (z - 0.004 >= zbuf[idxp]) continue;
+        shadePixel(A, B, C, w0, w1, w2, mode, idxp);
+        continue;
+      }
       if (z >= zbuf[idxp]) continue;
       if (process.env.PIXEL && Math.abs(x - Number(process.env.PIXEL.split(',')[0])) < 2 && Math.abs(y - Number(process.env.PIXEL.split(',')[1])) < 2) {
         console.log('pixel', x, y, 'mode', mode.kind, 'u', (A.uv[0] * w0 + B.uv[0] * w1 + C.uv[0] * w2).toFixed(3));
@@ -408,6 +475,7 @@ function drawTri(A, B, C, mode) {
 function drawGeometry(geo, m, mode) {
   const pos = geo.getAttribute('position');
   if (!pos) return;
+  if (mode.kind === 'card') return drawCards(geo, m, mode);
   const col = geo.getAttribute('aColor');
   const nor = geo.getAttribute('normal');
   const uv = geo.getAttribute('uv');
@@ -423,6 +491,51 @@ function drawGeometry(geo, m, mode) {
       p: v3a.clone(), n: vn.clone(), c,
       uv: uv ? [uv.getX(i), uv.getY(i)] : [0, 0],
       ao: aoa ? aoa.getX(i) : 0.85,
+    });
+  }
+  for (let t = 0; t < count; t += 3) {
+    const A = verts[idx ? idx.getX(t) : t];
+    const B = verts[idx ? idx.getX(t + 1) : t + 1];
+    const C = verts[idx ? idx.getX(t + 2) : t + 2];
+    if (A && B && C) drawTri(A, B, C, mode);
+  }
+}
+
+// Leaf cards are billboarded in the vertex shader: the quad lives in the
+// camera's right/up plane at an offset inside the plant, with a slow flutter.
+// The twin has to do the same or the cards show up as flat discs.
+function drawCards(geo, m, mode) {
+  const pos = geo.getAttribute('position');
+  const uvA = geo.getAttribute('uv');
+  const off = geo.getAttribute('aOffset');
+  const sizeA = geo.getAttribute('aSize');
+  const phaseA = geo.getAttribute('aPhase');
+  if (!off) return;
+  const idx = geo.getIndex();
+  const count = idx ? idx.count : pos.count;
+  const scl = (m.elements[0] ** 2 + m.elements[1] ** 2 + m.elements[2] ** 2) ** 0.5;
+  const verts = [];
+  for (let i = 0; i < pos.count; i++) {
+    const centre = new THREE.Vector3(off.getX(i), off.getY(i), off.getZ(i)).applyMatrix4(m);
+    const phase = phaseA ? phaseA.getX(i) : 0;
+    const rot = phase * 0.35;
+    const cs = Math.cos(rot), sn = Math.sin(rot);
+    const px = pos.getX(i), py = pos.getY(i);
+    const corner = [px * cs - py * sn, px * sn + py * cs];
+    const s = pos.getZ(i) * (sizeA ? sizeA.getX(i) : 1) * scl;
+    const gust = Math.sin(time * 0.6 + centre.x * 0.11 + centre.z * 0.09) * 0.5 + 0.5;
+    const flutter = Math.sin(time * 1.7 + phase * 6.2831 + centre.y) * 0.05 * (0.4 + gust);
+    const p = new THREE.Vector3(
+      centre.x + CAMRIGHT.x * corner[0] * s + WIND.x * flutter * (0.5 + corner[1] * 0.5),
+      centre.y + corner[1] * s * 0.92,
+      centre.z + CAMRIGHT.z * corner[0] * s + WIND.z * flutter * (0.5 + corner[1] * 0.5),
+    );
+    verts.push({
+      p,
+      n: new THREE.Vector3(0.30, 0.86, 0.41).normalize(),
+      c: [0.5, 0.5, 0.5],
+      uv: uvA ? [uvA.getX(i), uvA.getY(i)] : [0, 0],
+      ao: 0.9,
     });
   }
   for (let t = 0; t < count; t += 3) {
@@ -467,6 +580,14 @@ for (const cl of clusters) {
   } else if (cl.geo.getAttribute?.('aAO')) {
     mode = { kind: 'terrain' };
   }
+  for (const m of cl.mats) drawGeometry(cl.geo, m, mode);
+}
+
+// Soft contact shadow decals, drawn last with a depth bias so they sit on the
+// ground they belong to. The game uses the same numbers: a radial falloff,
+// multiplied toward a near-black green.
+for (const cl of decalClusters) {
+  const mode = { kind: 'decal', opacity: cl.opacity, color: cl.color };
   for (const m of cl.mats) drawGeometry(cl.geo, m, mode);
 }
 
