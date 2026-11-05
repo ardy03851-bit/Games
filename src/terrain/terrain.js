@@ -33,40 +33,47 @@ const CELL = WORLD.size / (WORLD.grid - 1);
 // Palette — sampled from the reference paintings (display-space sRGB)
 // ---------------------------------------------------------------------------
 export const PALETTE = {
-  grassSun: [0.624, 0.686, 0.455],   // #9faf74
-  grassLight: [0.557, 0.631, 0.380], // #8ea161
-  grassMid: [0.455, 0.506, 0.325],   // #748153
-  grassDeep: [0.353, 0.455, 0.286],  // #5a7449
-  grassShade: [0.239, 0.298, 0.212], // #3d4c36
-  grassDark: [0.157, 0.216, 0.157],  // #283728
+  // ---- grass: five painted greens, from sun-struck tips to near-black shade
+  grassSun: [0.639, 0.741, 0.427],   // #a3bd6d
+  grassLight: [0.510, 0.643, 0.349], // #82a459
+  grassMid: [0.396, 0.529, 0.267],   // #658744
+  grassDeep: [0.298, 0.435, 0.216],  // #4c6f37
+  grassShade: [0.200, 0.322, 0.165], // #33522a
+  grassDark: [0.118, 0.200, 0.106],  // #1e331b
 
-  dirtLight: [0.635, 0.553, 0.427],  // #a28d6d
-  dirtMid: [0.545, 0.469, 0.361],    // #8b785c
-  dirtDark: [0.404, 0.341, 0.267],   // #675744
-  dirtShadow: [0.278, 0.216, 0.165], // #473729
+  // ---- bare earth: warm ochre, the terraces in the reference paintings
+  dirtLight: [0.616, 0.478, 0.333],  // #9d7a55
+  dirtMid: [0.478, 0.353, 0.231],    // #7a5a3b
+  dirtDark: [0.333, 0.239, 0.149],   // #553d26
+  dirtShadow: [0.208, 0.145, 0.090], // #352517
 
-  rockLight: [0.361, 0.396, 0.463],  // #5c6576
-  rockMid: [0.243, 0.267, 0.333],    // #3e4455
-  rockDark: [0.161, 0.176, 0.231],   // #292d3b
-  rockShadow: [0.086, 0.098, 0.129], // #161921
-  stoneWarm: [0.396, 0.365, 0.333],
+  // ---- stone: cool blue-grey walls, dark undersides, warm bleached tops
+  rockLight: [0.439, 0.478, 0.557],  // #707a8e
+  rockMid: [0.306, 0.345, 0.424],    // #4e586c
+  rockDark: [0.200, 0.231, 0.298],   // #333b4c
+  rockShadow: [0.118, 0.141, 0.192], // #1e2431
 
-  paleStone: [0.847, 0.733, 0.518],  // #d8bb84 sun-bleached tops
+  stoneWarm: [0.784, 0.659, 0.471],  // #c8a878 warm sunlit boulder tops
+  paleStone: [0.851, 0.741, 0.553],  // #d9bd8d sun-bleached caps
 
-  waterShallow: [0.478, 0.588, 0.545], // #7a968b
-  waterMid: [0.318, 0.435, 0.427],     // #516f6d
-  waterDeep: [0.157, 0.267, 0.302],    // #28444d
-  waterFoam: [0.933, 0.945, 0.871],    // #eef1de
+  // ---- water: golden olive, dark ripple strokes, cream foam
+  waterShallow: [0.541, 0.522, 0.353], // #8a855a
+  waterMid: [0.400, 0.400, 0.255],     // #666641
+  waterDeep: [0.259, 0.290, 0.184],    // #424a2f
+  waterDeepest: [0.145, 0.180, 0.121], // #252e1f
+  waterFoam: [0.847, 0.831, 0.678],    // #d8d4ad
 
-  wood: [0.545, 0.408, 0.259],
-  woodLight: [0.729, 0.588, 0.396],
-  woodDark: [0.337, 0.235, 0.157],
-  bark: [0.353, 0.243, 0.161],
-  barkDark: [0.192, 0.133, 0.098],
+  // ---- timber
+  wood: [0.659, 0.475, 0.290],
+  woodLight: [0.816, 0.639, 0.396],
+  woodDark: [0.361, 0.243, 0.145],
+  bark: [0.427, 0.290, 0.176],
+  barkDark: [0.220, 0.145, 0.094],
 
-  pineDark: [0.106, 0.149, 0.145],
-  pineMid: [0.157, 0.220, 0.169],
-  pineLight: [0.259, 0.361, 0.239],
+  // ---- conifer needles, almost black in the shade
+  pineDark: [0.106, 0.176, 0.110],
+  pineMid: [0.173, 0.271, 0.149],
+  pineLight: [0.267, 0.412, 0.227],
 
   sun: [1.0, 0.937, 0.784],
   fog: [0.784, 0.741, 0.588],

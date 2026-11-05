@@ -41,27 +41,53 @@ float vnoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// three painted bands — the core of the look
+// four painted bands — the core of the look: hard edges, no lambert ramp
 vec3 mossLight(vec3 albedo, vec3 n, float ao) {
   vec3 nn = normalize(n);
   float ndl = dot(nn, uSunDir) * 0.5 + 0.5;
-  float b1 = smoothstep(0.38, 0.48, ndl);
-  float b2 = smoothstep(0.60, 0.70, ndl);
-  float shade = 0.26 + 0.44 * b1 + 0.34 * b2;
-  float aoA = mix(0.38, 1.0, ao);
-  vec3 amb = uAmbient * aoA * (0.80 + 0.20 * nn.y);
-  vec3 sun = uSunColor * shade * mix(0.30, 1.0, ao);
+  float b1 = smoothstep(0.400, 0.455, ndl);
+  float b2 = smoothstep(0.575, 0.625, ndl);
+  float b3 = smoothstep(0.750, 0.800, ndl);
+  float shade = 0.12 + 0.26 * b1 + 0.18 * b2 + 0.14 * b3;
+  float aoA = mix(0.40, 1.0, ao);
+  vec3 amb = uAmbient * aoA * (0.78 + 0.22 * nn.y);
+  vec3 sun = uSunColor * shade * mix(0.34, 1.0, ao);
   vec3 col = albedo * (amb + sun);
-  // cool bounce into shadowed surfaces, warm kiss on top faces
-  col += vec3(0.012, 0.02, 0.028) * (1.0 - b1) * aoA;
-  col += vec3(0.035, 0.028, 0.008) * b2 * nn.y;
-  return col;
+  // cool bounce into the shadow band, warm kiss on the top band
+  col += vec3(0.010, 0.022, 0.034) * (1.0 - b1) * aoA;
+  col += vec3(0.030, 0.024, 0.010) * b3 * max(0.0, nn.y);
+  // painted saturation — the reference art is richer than a physical model
+  float l = dot(col, vec3(0.299, 0.587, 0.114));
+  col = mix(vec3(l), col, 1.10);
+  return max(col, vec3(0.0));
+}
+
+// grass blades painted on the ground: thin strokes that always read from the
+// fixed camera, plus tiny square dabs of paint where a patch breaks up
+vec3 groundDetail(vec2 p, float fade, float greenish) {
+  vec2 dir = vec2(-0.30, 0.954);        // strokes run away toward the horizon
+  float across = dot(p, vec2(-dir.y, dir.x));
+  float along = dot(p, dir);
+  // two overlapping stroke fields at different scales, so nothing reads as a grid
+  float c1x = floor(across * 5.3), c1z = floor(along * 3.1);
+  float h1 = hash12(vec2(c1x, c1z));
+  float w1 = sin(along * 6.0 + h1 * 6.2831) * 0.3;
+  float s1 = step(0.68, h1) * smoothstep(0.55, 0.08, abs(fract(across * 5.3) - 0.5 + w1 * 0.22));
+  float c2x = floor(across * 11.0 + 3.0), c2z = floor(along * 6.4 + 7.0);
+  float h2 = hash12(vec2(c2x, c2z));
+  float w2 = sin(along * 14.0 + h2 * 6.2831) * 0.4;
+  float s2 = step(0.82, h2) * smoothstep(0.5, 0.1, abs(fract(across * 11.0 + 3.0) - 0.5 + w2 * 0.2));
+  // small dark dabs where a patch breaks up
+  float gx = floor(p.x * 5.0), gz = floor(p.y * 5.0);
+  float dab = step(0.90, hash12(vec2(gx, gz))) * (0.4 + 0.6 * hash12(vec2(gx + 7.0, gz)));
+  float stroke = clamp(s1 + s2 * 0.7, 0.0, 1.0) * greenish;
+  return (vec3(0.040, 0.058, 0.020) * stroke - vec3(0.048, 0.042, 0.024) * dab) * fade;
 }
 
 // unified painterly grade: gentle desaturation + warm bias ties every asset
 vec3 grade(vec3 c) {
   float l = dot(c, vec3(0.299, 0.587, 0.114));
-  c = mix(c, vec3(l), 0.13);
+  c = mix(c, vec3(l), 0.07);
   c *= vec3(1.025, 1.0, 0.972);
   return c;
 }
@@ -127,6 +153,14 @@ export function createTerrainMaterial() {
         float g2 = vnoise(vWorld.xz * 0.42 + 11.0);
         float g3 = vnoise(vWorld.xz * 7.0);
         vec3 albedo = vColor * (0.945 + g1 * 0.07 + g2 * 0.06 + g3 * 0.025);
+        // broad dappled shade, the deep green pools in the reference paintings
+        float shadeN = vnoise(vWorld.xz * 0.055 + 3.7) * 0.62 + vnoise(vWorld.xz * 0.13 - 8.0) * 0.38;
+        albedo *= mix(0.72, 1.10, smoothstep(0.28, 0.72, shadeN));
+        // distance-faded painted texture so the ground never reads as a wash
+        float fade = smoothstep(88.0, 26.0, vDist);
+        // grass strokes only on grass: bare earth keeps its smooth painted wash
+        float greenish = smoothstep(0.005, 0.075, albedo.g - albedo.r);
+        albedo += groundDetail(vWorld.xz, fade, greenish);
         vec3 n = normalize(vNormalW);
         vec3 col = mossLight(albedo, n, vAO);
         col = applyFog(col, vDist);
@@ -136,139 +170,6 @@ export function createTerrainMaterial() {
   });
 }
 
-// ---------------------------------------------------------------------------
-// Foliage cards (billboards + flat branch cards), fully wind-driven
-// ---------------------------------------------------------------------------
-export function createCardMaterial(map, opts = {}) {
-  const mat = new THREE.ShaderMaterial({
-    uniforms: {
-      ...commonUniforms(),
-      uMap: { value: map },
-      uTint: { value: new THREE.Color(1, 1, 1) },
-      uAlphaCut: { value: opts.alphaCut ?? 0.5 },
-      uDither: { value: opts.dither ?? 1.0 },
-      uSwayMul: { value: opts.sway ?? 1.0 },
-      uOcclude: { value: opts.occlude ?? 1.0 },
-      uBrightness: { value: opts.brightness ?? 1.0 },
-    },
-    side: THREE.DoubleSide,
-    transparent: false,
-    depthWrite: true,
-    defines: opts.billboard ? { BILLBOARD: '' } : {},
-    vertexShader: /* glsl */`
-      attribute vec4 aParams;   // x phase · y sway · z tint index · w lean
-      attribute vec3 aTint;
-      attribute float aImpulse;
-      uniform float uTime;
-      uniform vec3 uCamRight;
-      uniform vec2 uWindDir;
-      uniform float uWindStrength;
-      uniform float uSwayMul;
-      varying vec2 vUv;
-      varying vec3 vTint;
-      varying float vDist;
-      varying float vHeight;
-      varying vec3 vWorld;
-
-      void main() {
-        vec3 ip = instanceMatrix[3].xyz;
-        float sx = length(instanceMatrix[0].xyz);
-        float sy = length(instanceMatrix[1].xyz);
-        float sz = length(instanceMatrix[2].xyz);
-        #ifdef BILLBOARD
-          float h = clamp(position.y, 0.0, 1.0);
-        #else
-          float h = 0.9;
-        #endif
-
-        #ifdef BILLBOARD
-          vec3 right = normalize(uCamRight);
-          vec3 local = right * (position.x * sx) + vec3(0.0, 1.0, 0.0) * (position.y * sy);
-          float heightW = h * sy;
-        #else
-          vec3 axisX = normalize(instanceMatrix[0].xyz);
-          vec3 axisZ = normalize(instanceMatrix[2].xyz);
-          vec3 local = axisX * (position.x * sx) + axisZ * (position.z * sz);
-          float heightW = 0.0;
-        #endif
-
-        // ---- wind field: slow gusts + fast flutter, per-instance phase
-        float gust = sin(uTime * 0.55 + ip.x * 0.09 + ip.z * 0.11) * 0.5 + 0.5;
-        gust = gust * gust;
-        float wave = sin(uTime * 1.55 + aParams.x + ip.x * 0.22 + ip.z * 0.31) * 0.62
-                   + sin(uTime * 2.75 + aParams.x * 1.7 + ip.z * 0.6) * 0.26
-                   + sin(uTime * 5.1 + aParams.x * 2.3 + ip.x * 0.8) * 0.09;
-        float bend = wave * aParams.y * (0.34 + gust * 0.95) * uWindStrength * uSwayMul;
-        bend += aImpulse * 0.55;
-        float lever = pow(h, 1.55);
-        float lean = aParams.w;
-
-        vec3 pos = ip + local;
-        pos.xz += uWindDir.xy * bend * lever;
-        pos.xz += vec2(-uWindDir.y, uWindDir.x) * bend * lever * 0.28;
-        pos.xz += uWindDir.xy * lean * lever * 0.35;
-        // micro flutter (leaf tips shimmer)
-        #ifdef BILLBOARD
-          pos.x += sin(uTime * 4.7 + aParams.x * 2.9 + position.y * 5.0) * 0.016 * h * aParams.y;
-          pos.z += cos(uTime * 4.1 + aParams.x * 1.3 + position.y * 4.0) * 0.014 * h * aParams.y;
-        #else
-          pos.y += sin(uTime * 2.3 + aParams.x + position.x * 3.1 + position.z * 2.4) * 0.05 * aParams.y;
-        #endif
-
-        vUv = uv;
-        vTint = aTint;
-        vHeight = h;
-        vec4 wp = modelMatrix * vec4(pos, 1.0);
-        vWorld = wp.xyz;
-        vec4 mv = viewMatrix * wp;
-        vDist = -mv.z;
-        gl_Position = projectionMatrix * mv;
-      }
-    `,
-    fragmentShader: COMMON_GLSL + /* glsl */`
-      uniform sampler2D uMap;
-      uniform float uAlphaCut;
-      uniform float uDither;
-      uniform float uOcclude;
-      uniform float uBrightness;
-      uniform vec3 uTint;
-      varying vec2 vUv;
-      varying vec3 vTint;
-      varying float vDist;
-      varying float vHeight;
-      varying vec3 vWorld;
-
-      void main() {
-        vec4 tex = texture2D(uMap, vUv);
-        float a = tex.a;
-
-        // soft painted fringe: stochastic dither in a narrow alpha band keeps
-        // sprite edges ragged instead of laser-cut
-        if (a < uAlphaCut) {
-          float d = hash12(floor(gl_FragCoord.xy));
-          if (a < uAlphaCut * 0.62 + d * uAlphaCut * 0.85 * uDither) discard;
-        }
-
-        // subtle per-card hue drift keeps a field of grass from cloning
-        vec3 albedo = tex.rgb * vTint * uTint * uBrightness;
-
-        // foliage volumes read darker underneath
-        float ao = mix(0.55, 1.0, smoothstep(0.0, 0.75, vHeight));
-        ao *= mix(1.0, 0.82, uNightMix);
-        // gentle light from above with a slight camera-facing bias
-        vec3 n = normalize(vec3(0.0, 0.94, 0.34));
-        vec3 col = mossLight(albedo, n, mix(1.0, ao, uOcclude));
-        col = applyFog(col, vDist);
-        gl_FragColor = vec4(col, 1.0);
-      }
-    `,
-  });
-  return mat;
-}
-
-// ---------------------------------------------------------------------------
-// Solid painted surfaces (buildings, rocks, trunks, character)
-// ---------------------------------------------------------------------------
 export function createSolidMaterial(opts = {}) {
   return new THREE.ShaderMaterial({
     uniforms: {
@@ -321,9 +222,10 @@ export function createWaterMaterial(opts = {}) {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...commonUniforms(),
-      uDeep: { value: new THREE.Color(0.157, 0.267, 0.302) },
-      uShallow: { value: new THREE.Color(0.478, 0.588, 0.545) },
-      uFoam: { value: new THREE.Color(0.933, 0.945, 0.871) },
+      uDeep: { value: new THREE.Color(0.259, 0.290, 0.184) },
+      uShallow: { value: new THREE.Color(0.541, 0.522, 0.353) },
+      uFoam: { value: new THREE.Color(0.847, 0.831, 0.678) },
+      uStroke: { value: new THREE.Color(0.145, 0.180, 0.121) },
       uFlow: { value: opts.flow ?? 0.35 },
       uFall: { value: opts.fall ? 1 : 0 },
       uOpacity: { value: 1 },
@@ -345,6 +247,7 @@ export function createWaterMaterial(opts = {}) {
       uniform vec3 uDeep;
       uniform vec3 uShallow;
       uniform vec3 uFoam;
+      uniform vec3 uStroke;
       uniform float uFlow;
       uniform float uFall;
       uniform float uOpacity;
@@ -370,8 +273,8 @@ export function createWaterMaterial(opts = {}) {
         col += uFoam * streak * 0.22;
 
         // shore foam on the ribbon edges
-        float foam = smoothstep(0.16, 0.0, edge) * (0.55 + 0.45 * sin(uv.y * 90.0 + t * 3.0));
-        col = mix(col, uFoam, clamp(foam, 0.0, 0.85));
+        float foam = smoothstep(0.10, 0.0, edge) * (0.45 + 0.35 * sin(uv.y * 60.0 + t * 3.0));
+        col = mix(col, uFoam, clamp(foam, 0.0, 0.62));
 
         if (uFall > 0.5) {
           // vertical plunges read as pale, streaky curtains of water
@@ -400,7 +303,7 @@ export function createInstancedSolidMaterial(opts = {}) {
       uBrightness: { value: opts.brightness ?? 1 },
       uSwayPow: { value: opts.swayPow ?? 1.6 },
     },
-    side: THREE.FrontSide,
+    side: opts.doubleSide ? THREE.DoubleSide : THREE.FrontSide,
     vertexShader: /* glsl */`
       attribute vec3 aColor;
       attribute vec2 aWind;    // x phase · y sway amplitude

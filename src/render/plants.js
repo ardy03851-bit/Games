@@ -1,0 +1,326 @@
+/**
+ * Plants — every piece of greenery is real geometry, painted flat.
+ *
+ * The reference paintings never use photographic leaf cards: a plant is a
+ * handful of brush strokes with hard edges and a light/dark split. So each
+ * generator below builds small faceted shapes, bakes the light into vertex
+ * colours, and lets one instanced draw call scatter thousands of them.
+ *
+ *   grassTuft  · a fan of tapered blades
+ *   fern       · arcing fronds
+ *   bush       · a dark core wrapped in leaf lobes
+ *   canopy     · overlapping lobes with lighter dabs around the rim
+ *   pine       · stacked, jagged needle skirts
+ *   mushroom   · stem + cap
+ */
+import * as THREE from 'three';
+import { PALETTE } from '../terrain/terrain.js';
+
+const P = PALETTE;
+
+const mix = (a, b, t) => [
+  a[0] + (b[0] - a[0]) * t,
+  a[1] + (b[1] - a[1]) * t,
+  a[2] + (b[2] - a[2]) * t,
+];
+const scale3 = (c, s) => [c[0] * s, c[1] * s, c[2] * s];
+
+function hash(...args) {
+  let h = 2166136261;
+  for (const a of args) {
+    h ^= Math.imul((a * 1000) | 0, 374761393);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+  }
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+}
+
+/**
+ * Foliage reads lit-from-above in the reference paintings, so painted plants
+ * get their normals pulled toward the sky instead of being physically correct.
+ */
+function biasNormals(geo, up = 0.72) {
+  const n = geo.getAttribute('normal');
+  if (!n) return geo;
+  for (let i = 0; i < n.count; i++) {
+    const x = n.getX(i) * (1 - up), y = n.getY(i) * (1 - up) + up, z = n.getZ(i) * (1 - up);
+    const l = Math.hypot(x, y, z) || 1;
+    n.setXYZ(i, x / l, y / l, z / l);
+  }
+  n.needsUpdate = true;
+  return geo;
+}
+
+/** Raw non-indexed geometry from explicit triangles + a colour per vertex. */
+class Painter {
+  constructor() {
+    this.pos = [];
+    this.col = [];
+  }
+  tri(a, b, c, ca, cb, cc) {
+    this.pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
+    this.col.push(ca[0], ca[1], ca[2], cb[0], cb[1], cb[2], cc[0], cc[1], cc[2]);
+  }
+  quad(a, b, c, d, ca, cb, cc, cd) {
+    this.tri(a, b, c, ca, cb, cc);
+    this.tri(a, c, d, ca, cc, cd);
+  }
+  get count() {
+    return this.pos.length / 3;
+  }
+  build() {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(this.pos), 3));
+    geo.setAttribute('aColor', new THREE.BufferAttribute(new Float32Array(this.col), 3));
+    geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(this.count * 3), 3));
+    geo.computeVertexNormals();
+    return geo;
+  }
+}
+
+/** Append one painted geometry onto a Painter, transformed. */
+function absorb(painter, geo, matrix, tint = [1, 1, 1]) {
+  const pos = geo.getAttribute('position');
+  const col = geo.getAttribute('aColor');
+  const v = new THREE.Vector3();
+  const tri = [];
+  for (let i = 0; i < pos.count; i++) {
+    v.set(pos.getX(i), pos.getY(i), pos.getZ(i)).applyMatrix4(matrix);
+    tri.push([v.x, v.y, v.z, col.getX(i) * tint[0], col.getY(i) * tint[1], col.getZ(i) * tint[2]]);
+    if (tri.length === 3) {
+      painter.tri(
+        [tri[0][0], tri[0][1], tri[0][2]], [tri[1][0], tri[1][1], tri[1][2]], [tri[2][0], tri[2][1], tri[2][2]],
+        [tri[0][3], tri[0][4], tri[0][5]], [tri[1][3], tri[1][4], tri[1][5]], [tri[2][3], tri[2][4], tri[2][5]],
+      );
+      tri.length = 0;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Blades — the ground cover that gives the reference its "textured" ground
+// ---------------------------------------------------------------------------
+
+/**
+ * One tapered blade: three rows of vertices, curved and leaning outward.
+ * The face points at the camera (the game camera never moves), with a jitter
+ * so a tuft never looks like a row of identical fins.
+ */
+function addBlade(painter, {
+  angle, lean, height, width, curve, base = [0, 0, 0],
+  cBase, cMid, cTip, seed,
+}) {
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const rows = 2;
+  const pts = [];
+  for (let r = 0; r < rows; r++) {
+    const t = r / (rows - 1);
+    const y = height * t;
+    const out = lean * Math.pow(t, 1.5);
+    const w = width * (1 - t * 0.86) * (1 + Math.sin(t * 3.1 + seed) * 0.12);
+    const wobble = Math.sin(t * 2.4 + seed * 6.2831) * curve;
+    const cx = base[0] + ca * (out + wobble);
+    const cz = base[2] + sa * (out + wobble);
+    pts.push([
+      [cx - sa * w, base[1] + y, cz + ca * w],
+      [cx + sa * w, base[1] + y, cz - ca * w],
+      t,
+    ]);
+  }
+  const shadeAt = (t) => {
+    const j = 0.94 + hash(seed, t, 3) * 0.12;
+    return scale3(t < 0.5 ? mix(cBase, cMid, t * 2) : mix(cMid, cTip, (t - 0.5) * 2), j);
+  };
+  const c0 = shadeAt(0), c1 = shadeAt(1);
+  const a = pts[0], b = pts[1];
+  painter.quad(a[0], a[1], b[1], b[0], c0, c0, c1, c1);
+}
+
+/** A tuft of blades — the unit of ground cover. */
+export function grassTuftGeometry(opts = {}) {
+  const { blades = 5, height = 0.52, spread = 0.13, seed = 1 } = opts;
+  const p = new Painter();
+  for (let i = 0; i < blades; i++) {
+    const r = hash(seed, i, 1);
+    const r2 = hash(seed, i, 2);
+    const r3 = hash(seed, i, 3);
+    const angle = (r3 - 0.5) * 1.15;                 // faces the camera, jittered
+    const h = height * (0.6 + r * 0.85);
+    const tone = 0.9 + r2 * 0.22;
+    addBlade(p, {
+      angle,
+      lean: spread * (0.5 + r2 * 1.6),
+      height: h,
+      width: 0.030 + r3 * 0.016,
+      curve: spread * 0.35,
+      base: [(r2 - 0.5) * spread * 1.5, 0, (r3 - 0.5) * spread * 1.5],
+      cBase: scale3(mix(P.grassDeep, P.grassMid, 0.35), tone * 0.94),
+      cMid: scale3(P.grassMid, tone),
+      cTip: scale3(mix(P.grassLight, P.grassSun, 0.35 + r * 0.65), tone * 1.04),
+      seed: seed * 7.3 + i * 1.7,
+    });
+  }
+  return biasNormals(p.build(), 0.62);
+}
+
+// ---------------------------------------------------------------------------
+// Ferns
+// ---------------------------------------------------------------------------
+export function fernGeometry(seed = 2) {
+  const p = new Painter();
+  const fronds = 5;
+  for (let i = 0; i < fronds; i++) {
+    const a = (i / fronds) * Math.PI * 2 + seed * 0.7;
+    const r = hash(seed, i, 1);
+    addBlade(p, {
+      angle: a - Math.PI / 2 + (r - 0.5) * 0.5,
+      lean: 0.34 + r * 0.22,
+      height: 0.62 + r * 0.28,
+      width: 0.075,
+      curve: 0.05,
+      cBase: P.grassDeep,
+      cMid: mix(P.grassMid, P.grassLight, 0.35),
+      cTip: mix(P.grassLight, P.grassSun, 0.45),
+      seed: seed + i * 2.1,
+    });
+  }
+  return biasNormals(p.build(), 0.55);
+}
+
+// ---------------------------------------------------------------------------
+// Bushes and canopies — volumes made of overlapping painted lobes
+// ---------------------------------------------------------------------------
+/**
+ * A leafy mass: a few overlapping jittered blobs whose vertex colours already
+ * carry the light (bright on the sun side, near-black underneath) plus a hint
+ * of leaf-scale noise, so the surface reads as painted foliage.
+ */
+function leafyMass({ lobes, seed, jitter = 0.3, dark, mid, light, radius = 1 }) {
+  const painter = new Painter();
+  const sun = new THREE.Vector3(-0.55, 0.72, 0.42).normalize();
+  const v = new THREE.Vector3();
+  const n = new THREE.Vector3();
+  for (let i = 0; i < lobes.length; i++) {
+    const [x, y, z, r] = lobes[i];
+    const geo = new THREE.IcosahedronGeometry(r, i === 0 ? 1 : 0);
+    const pos = geo.getAttribute('position');
+    for (let k = 0; k < pos.count; k++) {
+      v.set(pos.getX(k), pos.getY(k), pos.getZ(k));
+      const h = hash(Math.round(v.x * 11 + seed + i), Math.round(v.y * 11), Math.round(v.z * 11));
+      const h2 = hash(Math.round(v.y * 13), Math.round(v.z * 13 + i), Math.round(v.x * 13 + seed));
+      v.multiplyScalar(1 + (h - 0.5) * jitter + (h2 - 0.5) * jitter * 0.5);
+      pos.setXYZ(k, v.x, v.y * 0.88, v.z);
+    }
+    const flat = geo.index ? geo.toNonIndexed() : geo;
+    flat.computeVertexNormals();
+    const fp = flat.getAttribute('position');
+    const fn = flat.getAttribute('normal');
+    // per-vertex tone, baked from a fixed sun so the mass is painted, not lit
+    const cols = new Float32Array(fp.count * 3);
+    for (let k = 0; k < fp.count; k++) {
+      n.set(fn.getX(k), fn.getY(k), fn.getZ(k));
+      const lit = Math.max(0, n.dot(sun));            // 0 … 1
+      const up = Math.max(0, n.y);
+      let c = mix(dark, mid, Math.min(1, lit * 1.7));
+      c = mix(c, light, Math.max(0, lit - 0.55) * 1.1 + Math.max(0, up - 0.5) * 0.35);
+      const leaf = hash(Math.round(fp.getX(k) * 6), Math.round(fp.getY(k) * 6 + i), Math.round(fp.getZ(k) * 6));
+      const j = 0.92 + leaf * 0.17;
+      cols[k * 3] = c[0] * j; cols[k * 3 + 1] = c[1] * j; cols[k * 3 + 2] = c[2] * j;
+    }
+    flat.setAttribute('aColor', new THREE.BufferAttribute(cols, 3));
+    absorb(painter, flat, new THREE.Matrix4().makeTranslation(x * radius, y * radius, z * radius)
+      .multiply(new THREE.Matrix4().makeScale(radius, radius, radius)));
+  }
+  return biasNormals(painter.build(), 0.30);
+}
+
+export function bushGeometry(seed = 3) {
+  const lobes = [
+    [0, 0.42, 0, 0.5], [0.3, 0.30, 0.16, 0.38], [-0.28, 0.26, -0.18, 0.36],
+    [0.06, 0.52, -0.22, 0.32],
+  ];
+  // the blob sits on the ground, so lift it a little
+  const geo = leafyMass({
+    lobes, seed, jitter: 0.34,
+    dark: P.grassDark, mid: P.grassDeep, light: P.grassMid,
+  });
+  geo.translate(0, 0.06, 0);
+  return geo;
+}
+
+export function canopyGeometry(seed = 11) {
+  const lobes = [
+    [0, 0.58, 0, 0.66], [0.40, 0.42, 0.18, 0.52], [-0.38, 0.38, -0.20, 0.50],
+    [0.10, 0.30, -0.44, 0.44], [-0.14, 0.34, 0.42, 0.42], [0.34, 0.62, -0.30, 0.34],
+  ];
+  const geo = leafyMass({
+    lobes, seed, jitter: 0.32,
+    dark: P.grassDark, mid: P.grassDeep, light: P.grassLight,
+  });
+  return geo;
+}
+
+// ---------------------------------------------------------------------------
+// Pines — stacked needle skirts with a jagged rim
+// ---------------------------------------------------------------------------
+export function pineGeometry({ layers = 7, seed = 5, height = 2.0, radius = 1.0 } = {}) {
+  const p = new Painter();
+  const seg = 11;
+  for (let i = 0; i < layers; i++) {
+    const t = i / (layers - 1);
+    const y = height * (0.12 + t * 0.82);
+    const r = radius * (1 - t * 0.78) * (0.85 + hash(seed, i, 1) * 0.3);
+    const drop = height * (0.10 + (1 - t) * 0.10);
+    // a ring of triangles, alternating long/short so the rim is jagged
+    for (let k = 0; k < seg; k++) {
+      const a0 = (k / seg) * Math.PI * 2 + i * 0.42;
+      const a1 = ((k + 1) / seg) * Math.PI * 2 + i * 0.42;
+      const long = k % 2 === 0;
+      const out = long ? 1.0 : 0.72;
+      const yTip = y - drop * (long ? 1.25 : 0.8);
+      const r0 = r * out, r1 = r * (long ? 0.72 : 1.0);
+      const tipCol = mix(P.pineMid, P.pineLight, long ? 0.55 : 0.2);
+      const inCol = P.pineDark;
+      const apex = [0, y + height * 0.045, 0];
+      const pa = [Math.cos(a0) * r0, yTip, Math.sin(a0) * r0];
+      const pb = [Math.cos(a1) * r1, yTip - drop * 0.15, Math.sin(a1) * r1];
+      p.tri(apex, pa, pb, mix(inCol, tipCol, 0.35), tipCol, tipCol);
+      // underside kept very dark: the reference keeps pine bells in shadow
+      p.tri(
+        [0, y - drop * 0.55, 0], pb, pa,
+        scale3(inCol, 0.72), scale3(tipCol, 0.55), scale3(tipCol, 0.55),
+      );
+    }
+  }
+  return biasNormals(p.build(), 0.45);
+}
+
+// ---------------------------------------------------------------------------
+// Mushrooms
+// ---------------------------------------------------------------------------
+export function mushroomGeometry(seed = 9) {
+  const p = new Painter();
+  const stem = new THREE.CylinderGeometry(0.055, 0.07, 0.2, 5, 1, false);
+  stem.translate(0, 0.1, 0);
+  const sf = stem.index ? stem.toNonIndexed() : stem;
+  sf.computeVertexNormals();
+  const sc = new Float32Array(sf.getAttribute('position').count * 3);
+  for (let i = 0; i < sc.length / 3; i++) {
+    sc[i * 3] = 0.86; sc[i * 3 + 1] = 0.82; sc[i * 3 + 2] = 0.7;
+  }
+  sf.setAttribute('aColor', new THREE.BufferAttribute(sc, 3));
+  absorb(p, sf, new THREE.Matrix4());
+
+  const cap = new THREE.SphereGeometry(0.16, 7, 4, 0, Math.PI * 2, 0, Math.PI * 0.55);
+  cap.translate(0, 0.2, 0);
+  const cf = cap.index ? cap.toNonIndexed() : cap;
+  cf.computeVertexNormals();
+  const cc = new Float32Array(cf.getAttribute('position').count * 3);
+  const capCol = mix(P.dirtLight, P.paleStone, 0.55);
+  for (let i = 0; i < cc.length / 3; i++) {
+    cc[i * 3] = capCol[0]; cc[i * 3 + 1] = capCol[1]; cc[i * 3 + 2] = capCol[2];
+  }
+  cf.setAttribute('aColor', new THREE.BufferAttribute(cc, 3));
+  absorb(p, cf, new THREE.Matrix4());
+  return p.build();
+}
+

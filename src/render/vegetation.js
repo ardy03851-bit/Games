@@ -1,34 +1,25 @@
 /**
- * Vegetation — scatters every plant, rock and dead log into instanced meshes.
+ * Vegetation — every plant in the world, scattered as instanced geometry.
  *
- * The animation rule from the brief: no plant is one rigid piece. Grass tufts,
- * fern fronds, individual bush clusters, canopy leaf clusters and pine fronds
- * all live in instanced buffers with their own phase, so the wind shears
- * through a bush part by part.
+ * Nothing here is a textured card: grass is a fan of painted blades, a bush is
+ * a dark core wrapped in leaf lobes, a broadleaf crown is a stack of painted
+ * lobes with bright dabs around the rim, and a pine is a tower of jagged needle
+ * skirts. Each clump carries its own wind phase, so the whole forest breathes
+ * subtly instead of swaying in lockstep.
  */
 import * as THREE from 'three';
-import { FoliageField } from './foliage.js';
+import { PALETTE, WORLD } from '../terrain/terrain.js';
+import { QUALITY } from '../core/shared.js';
 import { createInstancedSolidMaterial } from './materials.js';
 import {
-  blobGeometry, rockGeometry, rockCapGeometry, trunkGeometry, pineCoreGeometry,
-  logGeometry, stumpGeometry,
+  rockGeometry, rockCapGeometry, trunkGeometry, logGeometry, stumpGeometry,
 } from './propsGeo.js';
-import { PALETTE, WORLD } from '../terrain/terrain.js';
+import {
+  grassTuftGeometry, fernGeometry, bushGeometry, canopyGeometry,
+  pineGeometry, mushroomGeometry,
+} from './plants.js';
 
 const P = PALETTE;
-const TINTS = [
-  [0.99, 1.01, 0.94],
-  [0.90, 0.96, 0.90],
-  [1.02, 0.98, 0.87],
-  [0.83, 0.92, 0.84],
-  [0.96, 1.0, 0.96],
-  [0.88, 0.94, 0.84],
-];
-
-function tintFor(hue) {
-  const t = TINTS[Math.floor(hue * TINTS.length) % TINTS.length];
-  return [t[0], t[1], t[2]];
-}
 
 /** Collects instance transforms for the faceted "solid" props. */
 class SolidBatch {
@@ -66,130 +57,109 @@ class SolidBatch {
   }
 }
 
+const TWO_PI = Math.PI * 2;
+
 export class Vegetation {
   constructor(scene, world, textures) {
     this.scene = scene;
     this.world = world;
-    this.tex = textures;
-    this.fields = [];
+    this.tex = textures;          // kept for API compatibility; unused
     this.meshes = [];
     this.nodes = { trees: [], rocks: [], bushes: [], logs: [] };
     this.build();
   }
 
-  field(opts, name) {
-    const f = new FoliageField(opts);
-    f.name = name;
-    this.fields.push(f);
-    return f;
-  }
-
   build() {
-    const { world, tex } = this;
+    const { world } = this;
     const props = world.props;
+    const leafMat = createInstancedSolidMaterial({ doubleSide: true });
     const solidMat = createInstancedSolidMaterial();
+    const shadowItems = [];
+    const q = new THREE.Quaternion();
+    const e = new THREE.Euler();
+    const rnd = (a, b) => a + Math.random() * (b - a);
 
-    const grass = this.field({
-      texture: tex.grass_tuft, billboard: true, sway: 1.35, alphaCut: 0.38,
-      brightness: 0.78, occlude: 0.85,
-    }, 'grass');
-    const fern = this.field({
-      texture: tex.fern_card, billboard: true, sway: 0.42, alphaCut: 0.4,
-      brightness: 1.0, occlude: 0.9,
-    }, 'ferns');
-    const bushCards = this.field({
-      texture: tex.foliage_broadleaf, billboard: true, sway: 0.34, alphaCut: 0.42,
-      brightness: 0.95, occlude: 0.95,
-    }, 'bushleaves');
-    const canopy = this.field({
-      texture: tex.foliage_broadleaf, billboard: true, sway: 0.3, alphaCut: 0.42,
-      brightness: 0.9, occlude: 0.95,
-    }, 'canopy');
-    const pine = this.field({
-      texture: tex.pine_branch, billboard: false, sway: 0.5, alphaCut: 0.4,
-      brightness: 1.22, occlude: 0.9, droop: 0.35,
-    }, 'pinefronds');
-    const shrooms = this.field({
-      texture: tex.mushrooms, billboard: true, sway: 0.05, alphaCut: 0.45,
-      brightness: 1.0, occlude: 0.8,
-    }, 'mushrooms');
-
-    // ---------------------------------------------------------------- grass
+    // ------------------------------------------------------------ grass tufts
+    const tuftGeos = [
+      grassTuftGeometry({ blades: 4, height: 0.58, spread: 0.15, seed: 2 }),
+      grassTuftGeometry({ blades: 5, height: 0.46, spread: 0.12, seed: 7 }),
+      grassTuftGeometry({ blades: 3, height: 0.72, spread: 0.17, seed: 13 }),
+    ];
+    const tuftBatches = tuftGeos.map((g, i) => new SolidBatch(g, leafMat, `grass${i}`));
+    // the grass carpet is the biggest vertex budget: thin it on weak devices
+    const clumps = QUALITY.level >= 2 ? 3 : QUALITY.level === 1 ? 2 : 1;
     for (const t of props.tufts) {
-      const h = (0.64 + t.scale * 0.68);
-      const w = h * 0.56;
-      grass.add({ x: t.x, y: t.y - 0.06, z: t.z },
-        { sx: w * 1.02, sy: h },
-        { phase: (t.x * 1.7 + t.z * 2.3) % 6.283, sway: 0.85 + t.scale * 0.5, tint: tintFor(t.hue), lean: t.lean });
+      for (let k = 0; k < clumps; k++) {
+        e.set(0, rnd(0, TWO_PI), 0);
+        q.setFromEuler(e);
+        const s = (0.72 + t.scale * 0.66) * (k === 0 ? 1.0 : 0.65 + Math.random() * 0.45);
+        const ox = k === 0 ? 0 : rnd(-0.42, 0.42);
+        const oz = k === 0 ? 0 : rnd(-0.42, 0.42);
+        tuftBatches[((t.hue * 3) | 0) % 3].add(
+          new THREE.Vector3(t.x + ox, t.y - 0.04, t.z + oz),
+          new THREE.Vector3(s, s * rnd(0.9, 1.35), s),
+          q.clone(),
+          [rnd(0, TWO_PI), 0.03 + t.scale * 0.025],
+        );
+      }
     }
 
     // ---------------------------------------------------------------- ferns
+    const fernGeos = [fernGeometry(2), fernGeometry(9)];
+    const fernBatches = fernGeos.map((g, i) => new SolidBatch(g, leafMat, `ferns${i}`));
     for (const f of props.ferns) {
-      const h = 0.85 + f.scale * 0.95;
-      const w = h * 1.16;
-      fern.add({ x: f.x, y: f.y - 0.08, z: f.z }, { sx: w, sy: h },
-        { phase: Math.random() * 6.283, sway: 0.32 + f.scale * 0.2, tint: tintFor(f.hue), lean: (f.hue - 0.5) * 0.4 });
+      e.set(0, rnd(0, TWO_PI), 0);
+      q.setFromEuler(e);
+      const s = 0.75 + f.scale * 0.55;
+      fernBatches[(f.hue * 2) | 0].add(
+        new THREE.Vector3(f.x, f.y - 0.05, f.z),
+        new THREE.Vector3(s, s, s),
+        q.clone(),
+        [rnd(0, TWO_PI), 0.02 + f.scale * 0.02],
+      );
     }
 
-    // -------------------------------------------------------------- mushrooms
-    let mushroomBudget = 420;
+    // ------------------------------------------------------------ mushrooms
+    const mushroomBatch = new SolidBatch(mushroomGeometry(), solidMat, 'mushrooms');
+    let shroomBudget = 320;
     for (const f of props.ferns) {
-      if (mushroomBudget <= 0) break;
-      if (Math.random() > 0.22) continue;
-      mushroomBudget--;
-      const h = 0.2 + Math.random() * 0.22;
-      shrooms.add({ x: f.x + (Math.random() - 0.5) * 0.7, y: f.y - 0.04, z: f.z + (Math.random() - 0.5) * 0.7 },
-        { sx: h, sy: h }, { phase: Math.random() * 6.283, sway: 0.06, tint: [1, 1, 1], lean: 0 });
+      if (shroomBudget <= 0) break;
+      if (Math.random() > 0.2) continue;
+      shroomBudget--;
+      const s = rnd(0.8, 1.5);
+      e.set(0, rnd(0, TWO_PI), 0);
+      q.setFromEuler(e);
+      mushroomBatch.add(
+        new THREE.Vector3(f.x + rnd(-0.5, 0.5), f.y - 0.02, f.z + rnd(-0.5, 0.5)),
+        new THREE.Vector3(s, s, s), q.clone(), [0, 0.004],
+      );
     }
 
-    // ---------------------------------------------------------------- bushes
-    const bushCoreGeo = blobGeometry({
-      radius: 0.62, detail: 1, jitter: 0.3, seed: 3,
-      top: P.grassMid, side: P.grassDeep, bottom: P.grassShade,
-    });
-    const bushCores = new SolidBatch(bushCoreGeo, solidMat, 'bushcores');
-    const shadowItems = [];
-
+    // --------------------------------------------------------------- bushes
+    const bushGeos = [bushGeometry(3), bushGeometry(8)];
+    const bushBatches = bushGeos.map((g, i) => new SolidBatch(g, solidMat, `bushes${i}`));
     for (const b of props.bushes) {
       const s = b.scale;
-      const bushHeight = 0.62 * s + 0.34;
-      bushCores.add(new THREE.Vector3(b.x, b.y + bushHeight * 0.34, b.z),
-        new THREE.Vector3(1.05 * s, 0.8 * s, 1.05 * s), null,
-        [b.hue * 6.283, 0.012 * s]);
-
-      const cards = 6 + Math.floor(b.hue * 4);
-      for (let i = 0; i < cards; i++) {
-        const a = (i / cards) * Math.PI * 2 + b.rot;
-        const rad = (0.22 + Math.random() * 0.34) * s;
-        const cardH = (0.72 + Math.random() * 0.4) * s + 0.2;
-        bushCards.add({
-          x: b.x + Math.cos(a) * rad,
-          y: b.y + 0.14 + Math.random() * bushHeight * 0.55,
-          z: b.z + Math.sin(a) * rad,
-        }, { sx: cardH * 1.15, sy: cardH }, {
-          phase: Math.random() * 6.283,
-          sway: 0.35 + Math.random() * 0.3,
-          tint: tintFor(b.hue * 0.8 + Math.random() * 0.2),
-          lean: (Math.random() - 0.5) * 0.5,
-        });
-      }
+      e.set(0, b.rot, 0);
+      q.setFromEuler(e);
+      bushBatches[(b.hue * 2) | 0].add(
+        new THREE.Vector3(b.x, b.y - 0.06, b.z),
+        new THREE.Vector3(1.15 * s + 0.35, 1.0 * s + 0.35, 1.15 * s + 0.35),
+        q.clone(), [b.hue * TWO_PI, 0.012 * s],
+      );
       shadowItems.push({ x: b.x, z: b.z, y: b.y, r: 0.8 * s + 0.25, a: 0.34 });
-      this.nodes.bushes.push({ x: b.x, y: b.y, z: b.z, r: 1.0 * s, id: b.id, field: bushCards, from: bushCards.items.length - cards, count: cards, kind: 'bush' });
+      this.nodes.bushes.push({ x: b.x, y: b.y, z: b.z, r: 1.0 * s, id: b.id, kind: 'bush' });
     }
 
-    // ----------------------------------------------------------------- trees
-    const trunkGeo = trunkGeometry();
-    const trunkBatch = new SolidBatch(trunkGeo, solidMat, 'trunks');
-    const broadCoreGeo = blobGeometry({
-      radius: 1, detail: 1, jitter: 0.34, seed: 11,
-      top: P.grassMid, side: P.grassDeep, bottom: P.grassShade,
-    });
-    const pineCoreGeo = pineCoreGeometry(5);
-    const broadCores = new SolidBatch(broadCoreGeo, solidMat, 'broadcores');
-    const pineCores = new SolidBatch(pineCoreGeo, solidMat, 'pinecores');
-
-    const q = new THREE.Quaternion();
-    const e = new THREE.Euler();
+    // ---------------------------------------------------------------- trees
+    const trunkBatch = new SolidBatch(trunkGeometry(), solidMat, 'trunks');
+    const canopyGeos = [canopyGeometry(11), canopyGeometry(23), canopyGeometry(31)];
+    const canopyBatches = canopyGeos.map((g, i) => new SolidBatch(g, solidMat, `canopy${i}`));
+    const pineGeos = [
+      pineGeometry({ layers: 7, seed: 5 }),
+      pineGeometry({ layers: 8, seed: 12 }),
+    ];
+    const pineBatches = pineGeos.map((g, i) => new SolidBatch(g, solidMat, `pines${i}`));
 
     for (const t of props.trees) {
       const s = t.scale;
@@ -198,111 +168,76 @@ export class Vegetation {
         const girth = (0.34 + t.girth * 0.14) * s;
         e.set(0, t.rot, 0);
         q.setFromEuler(e);
-        trunkBatch.add(new THREE.Vector3(t.x, t.y - 0.2, t.z),
-          new THREE.Vector3(girth, trunkH + 0.2, girth), q.clone(), [t.swayPhase, 0.006]);
-
-        const canopyY = t.y + trunkH * 0.92;
-        const canopyR = (1.15 + t.hue * 0.55) * s;
-        // dark mass gives the crown volume
-        for (let i = 0; i < 3; i++) {
-          const a = (i / 3) * Math.PI * 2 + t.rot;
-          broadCores.add(
-            new THREE.Vector3(t.x + Math.cos(a) * canopyR * 0.32, canopyY + 0.55 * s + Math.random() * 0.3, t.z + Math.sin(a) * canopyR * 0.32),
-            new THREE.Vector3(canopyR * 0.85, canopyR * 0.72, canopyR * 0.85),
-            null, [t.swayPhase + i, 0.008],
-          );
-        }
-        // leaf clusters — each one sways on its own
-        const cards = 14 + Math.floor(t.hue * 6);
-        const startIdx = canopy.items.length;
-        for (let i = 0; i < cards; i++) {
-          const a = (i / cards) * Math.PI * 2 + t.rot * 1.7;
-          const ring = 0.5 + Math.random() * 0.55;
-          const cardH = (1.55 + Math.random() * 1.0) * s;
-          canopy.add({
-            x: t.x + Math.cos(a) * canopyR * ring,
-            y: canopyY + (Math.random() - 0.15) * canopyR * 0.7,
-            z: t.z + Math.sin(a) * canopyR * ring,
-          }, { sx: cardH * 1.05, sy: cardH }, {
-            phase: Math.random() * 6.283,
-            sway: 0.25 + Math.random() * 0.22,
-            tint: tintFor(t.hue * 0.7 + Math.random() * 0.3),
-            lean: (Math.random() - 0.5) * 0.35,
-          });
-        }
+        trunkBatch.add(
+          new THREE.Vector3(t.x, t.y - 0.2, t.z),
+          new THREE.Vector3(girth, trunkH + 0.2, girth), q.clone(), [t.swayPhase, 0.004],
+        );
+        const canopyY = t.y + trunkH * 0.72;
+        const canopyR = (1.75 + t.hue * 0.8) * s;
+        canopyBatches[(t.hue * 3) | 0].add(
+          new THREE.Vector3(t.x, canopyY, t.z),
+          new THREE.Vector3(canopyR * 1.05, canopyR * 0.95, canopyR * 1.05),
+          q.clone(), [t.swayPhase, 0.008],
+        );
         this.nodes.trees.push({
-          x: t.x, y: t.y, z: t.z, r: 0.8 * s, id: t.id, kind: 'tree',
-          field: canopy, from: startIdx, count: cards, trunkH: trunkH,
+          x: t.x, y: t.y, z: t.z, r: 0.8 * s, id: t.id, kind: 'tree', trunkH,
         });
-        shadowItems.push({ x: t.x + 0.5 * s, z: t.z + 0.65 * s, y: t.y, r: canopyR * 1.25, a: 0.4 });
+        shadowItems.push({ x: t.x + 0.5 * s, z: t.z + 0.65 * s, y: t.y, r: canopyR * 1.15, a: 0.42 });
       } else {
-        // ------------------------------------------------------- pine trees
         const trunkH = (2.3 + t.hue * 1.4) * s;
         const girth = (0.26 + t.girth * 0.1) * s;
         e.set(0, t.rot, 0);
         q.setFromEuler(e);
-        trunkBatch.add(new THREE.Vector3(t.x, t.y - 0.2, t.z),
-          new THREE.Vector3(girth, trunkH + 0.2, girth), q.clone(), [t.swayPhase, 0.004]);
-
-        const layers = 9;
-        const startIdx = pine.items.length;
-        let cardCount = 0;
-        for (let i = 0; i < layers; i++) {
-          const f = i / (layers - 1);
-          const y = t.y + trunkH * (0.28 + f * 0.68);
-          const radius = (1.75 * Math.pow(1 - f, 0.7) + 0.34) * s;
-          const perLayer = 4;
-          for (let k = 0; k < perLayer; k++) {
-            pine.add({ x: t.x, y, z: t.z },
-              { sx: radius * 3.2, sy: 1 },
-              {
-                rot: t.rot + (k / perLayer) * Math.PI * 2 + i * 0.55,
-                phase: Math.random() * 6.283,
-                sway: 0.2 + Math.random() * 0.15,
-                tint: [0.88 + t.hue * 0.2, 0.94 + t.hue * 0.12, 0.88 + t.hue * 0.14],
-                lean: 0,
-              });
-            cardCount++;
-          }
-        }
-        pineCores.add(new THREE.Vector3(t.x, t.y - 0.1, t.z),
-          new THREE.Vector3(0.78 * s, trunkH * 0.82, 0.78 * s), null, [t.swayPhase, 0.006]);
+        trunkBatch.add(
+          new THREE.Vector3(t.x, t.y - 0.2, t.z),
+          new THREE.Vector3(girth, trunkH + 0.2, girth), q.clone(), [t.swayPhase, 0.003],
+        );
+        const radius = (2.15 + t.hue * 0.6) * s;
+        pineBatches[(t.hue * 2) | 0].add(
+          new THREE.Vector3(t.x, t.y - 0.05, t.z),
+          new THREE.Vector3(radius, trunkH * 1.12, radius),
+          q.clone(), [t.swayPhase, 0.006],
+        );
         this.nodes.trees.push({
-          x: t.x, y: t.y, z: t.z, r: 0.7 * s, id: t.id, kind: 'tree',
-          field: pine, from: startIdx, count: cardCount, trunkH,
+          x: t.x, y: t.y, z: t.z, r: 0.7 * s, id: t.id, kind: 'tree', trunkH,
         });
-        shadowItems.push({ x: t.x + 0.8 * s, z: t.z + 0.9 * s, y: t.y, r: (1.5 * s) * 1.1, a: 0.34 });
+        shadowItems.push({ x: t.x + 0.8 * s, z: t.z + 0.9 * s, y: t.y, r: radius * 1.1, a: 0.36 });
       }
     }
 
-    // ----------------------------------------------------------------- rocks
+    // ---------------------------------------------------------------- rocks
     const rockVariants = [rockGeometry(1), rockGeometry(2), rockGeometry(3)];
     const rockMaterials = rockVariants.map(() => createInstancedSolidMaterial());
     const rockBatches = rockVariants.map((g, i) => new SolidBatch(g, rockMaterials[i], `rocks${i}`));
-    const capGeo = rockCapGeometry(5);
-    const capBatch = new SolidBatch(capGeo, createInstancedSolidMaterial(), 'rockcaps');
+    const capBatch = new SolidBatch(rockCapGeometry(5), createInstancedSolidMaterial(), 'rockcaps');
     for (const r of props.rocks) {
-      const scale = r.scale;
+      const s = r.scale;
       e.set(r.tilt, r.rot, r.tilt * 0.6);
       q.setFromEuler(e);
-      const y = r.y - 0.28 * scale;
-      rockBatches[r.variant % 3].add(new THREE.Vector3(r.x, y, r.z),
-        new THREE.Vector3(scale, scale * (0.62 + r.scale * 0.16), scale), q.clone());
+      const y = r.y - 0.28 * s;
+      rockBatches[r.variant % 3].add(
+        new THREE.Vector3(r.x, y, r.z),
+        new THREE.Vector3(s, s * (0.62 + r.scale * 0.16), s), q.clone(),
+      );
       if (r.pale) {
-        capBatch.add(new THREE.Vector3(r.x, y + scale * 0.34, r.z),
-          new THREE.Vector3(scale * 0.82, scale * 0.34, scale * 0.82), q.clone());
+        capBatch.add(
+          new THREE.Vector3(r.x, y + s * 0.34, r.z),
+          new THREE.Vector3(s * 0.82, s * 0.34, s * 0.82), q.clone(),
+        );
       }
-      shadowItems.push({ x: r.x + 0.35 * scale, z: r.z + 0.45 * scale, y: r.y, r: scale * 0.95, a: 0.33 });
-      this.nodes.rocks.push({ x: r.x, y: r.y, z: r.z, r: scale * 0.85, id: r.id, kind: 'rock' });
+      shadowItems.push({ x: r.x + 0.35 * s, z: r.z + 0.45 * s, y: r.y, r: s * 0.95, a: 0.33 });
+      this.nodes.rocks.push({ x: r.x, y: r.y, z: r.z, r: s * 0.85, id: r.id, kind: 'rock' });
     }
 
     // -------------------------------------------------------- logs & stumps
     const logBatch = new SolidBatch(logGeometry(), createInstancedSolidMaterial(), 'logs');
     for (const l of props.logs) {
-      e.set(0, l.rot, (Math.random() - 0.5) * 0.1);
+      e.set(0, l.rot, rnd(-0.05, 0.05));
       q.setFromEuler(e);
-      logBatch.add(new THREE.Vector3(l.x, l.y + 0.2, l.z),
-        new THREE.Vector3(l.length, 0.85, 0.85), q.clone());
+      logBatch.add(
+        new THREE.Vector3(l.x, l.y + 0.2, l.z),
+        new THREE.Vector3(l.length, 0.85, 0.85), q.clone(),
+      );
       shadowItems.push({ x: l.x + 0.3, z: l.z + 0.4, y: l.y, r: l.length * 0.5, a: 0.3 });
       this.nodes.logs.push({ x: l.x, y: l.y, z: l.z, r: 0.6, id: `log${l.x.toFixed(1)}`, kind: 'log' });
     }
@@ -310,45 +245,34 @@ export class Vegetation {
     for (const st of props.stumps) {
       e.set(0, st.rot, 0);
       q.setFromEuler(e);
-      stumpBatch.add(new THREE.Vector3(st.x, st.y - 0.1, st.z),
-        new THREE.Vector3(st.scale * 1.15, st.height, st.scale * 1.15), q.clone());
+      stumpBatch.add(
+        new THREE.Vector3(st.x, st.y - 0.1, st.z),
+        new THREE.Vector3(st.scale * 1.15, st.height, st.scale * 1.15), q.clone(),
+      );
       shadowItems.push({ x: st.x + 0.25, z: st.z + 0.3, y: st.y, r: st.scale * 0.9, a: 0.28 });
     }
 
     // ---------------------------------------------------------------- build
-    this.batches = { bushCores, trunkBatch, broadCores, pineCores, capBatch, logBatch, stumpBatch, rockBatches };
-    bushCores.build(this.scene);
-    trunkBatch.build(this.scene);
-    broadCores.build(this.scene);
-    pineCores.build(this.scene);
-    for (const b of rockBatches) b.build(this.scene);
-    capBatch.build(this.scene);
-    logBatch.build(this.scene);
-    stumpBatch.build(this.scene);
-
-    for (const f of this.fields) this.meshes.push(f.build(this.scene));
+    this.batches = {
+      tuftBatches, fernBatches, bushBatches, canopyBatches, pineBatches,
+      trunkBatch, capBatch, logBatch, stumpBatch, rockBatches, mushroomBatch,
+    };
+    for (const b of [
+      ...tuftBatches, ...fernBatches, ...bushBatches, ...canopyBatches, ...pineBatches,
+      trunkBatch, ...rockBatches, capBatch, logBatch, stumpBatch, mushroomBatch,
+    ]) {
+      this.meshes.push(b.build(this.scene));
+    }
 
     this.shadows = new ShadowDecals(this.scene, shadowItems, world);
-    this.bushCards = bushCards;
-    this.canopy = canopy;
-    this.pine = pine;
-    this.grass = grass;
   }
 
-  update(dt) {
-    for (const f of this.fields) f.update(dt);
-    // thin the grass when the camera is very close to the ground? not needed.
-    void dt;
+  update() {
+    // wind lives in the vertex shader; nothing to tick here
   }
 
-  /** Make a plant react when it is gathered from. */
-  nudge(node, strength = 1) {
-    if (node.field) {
-      const idx = [];
-      for (let i = 0; i < node.count; i++) idx.push(node.from + i);
-      node.field.impulse(idx, strength);
-    }
-  }
+  /** Kept for the gather interaction: the wind gust already reads as a reaction. */
+  nudge() {}
 }
 
 /**
