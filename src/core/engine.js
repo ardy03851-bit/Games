@@ -9,8 +9,8 @@ import { shared, clamp } from './shared.js';
 
 export const CAMERA = {
   fov: 26,
-  elevation: 0.905,   // radians above the horizon — fixed
-  distance: 50,
+  elevation: 0.985,   // radians above the horizon — fixed
+  distance: 43,
   lookAhead: 2.4,
   followLerp: 7.5,
 };

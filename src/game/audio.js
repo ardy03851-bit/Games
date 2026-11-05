@@ -1,6 +1,6 @@
 /**
  * Audio is fully synthesised — no sample downloads, so the whole game stays a
- * few text files plus a handful of painted sprites.
+ * few text files plus procedurally painted geometry.
  */
 export class Audio {
   constructor() {

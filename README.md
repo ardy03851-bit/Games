@@ -15,18 +15,20 @@ server, no external requests. Drop it on GitHub Pages and it runs.
 The whole game is shaded by a handful of small hand-written GLSL programs that
 turn geometry into flat, painted bands rather than smooth PBR:
 
-* **three light bands** (`smoothstep` thresholds) instead of a lambert ramp
-* **baked horizon AO + long cast shadows** painted into the terrain vertices
+* **four light bands** (`smoothstep` thresholds) instead of a lambert ramp
+* **no textures at all** — there is not a single photographic leaf in here.
+  Grass is thousands of painted blades, a bush is a dark core wrapped in leaf
+  lobes, a crown is a stack of lobes, a pine is a tower of jagged needle skirts
+* **baked horizon AO + soft contact shadows** under everything that stands up
 * **palette sampled directly from the reference paintings** (see
-  `src/terrain/terrain.js` → `PALETTE`)
-* **alpha-dithered foliage edges** so sprites have a ragged, brushed border
+  `src/terrain/terrain.js` → `PALETTE`), with a slow painted mottle and
+  brush-stroke texture in the terrain shader
 * unifying `grade()` pass: gentle desaturation + warm bias
 * warm haze that swallows the distance
 
-Everything animates: grass tufts, ferns, every individual bush cluster, every
-tree crown leaf, every pine frond and the mushrooms all have their own wind
-phase, amplitude and lean. A bush is never one rigid object — it is a cluster
-of independently swaying cards around a dark core.
+Everything animates: every grass blade, frond, bush and tree sways on its own
+wind phase in the vertex shader — a slow gust plus a faster flutter, so the
+whole valley breathes instead of moving in lockstep.
 
 ## The valley
 
@@ -103,11 +105,10 @@ composed to be read exactly one way.
 index.html            the shell
 styles/game.css       parchment UI
 src/terrain/          noise, generation, palette
-src/render/           terrain mesh, foliage, props, water, effects, materials
+src/render/           terrain mesh, plants, props, water, effects, materials
 src/game/             player, building, audio, save, game loop
 src/ui/               HUD, build tray, thumb-stick
 src/vendor/           three.js (MIT) + BufferGeometryUtils
-assets/sprites/       painted foliage sprites (AI-generated, alpha-keyed)
 assets/art/           key art + icon
 ```
 

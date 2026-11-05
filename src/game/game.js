@@ -10,19 +10,11 @@ import { buildTerrainMesh } from '../render/terrainMesh.js';
 import { Vegetation } from '../render/vegetation.js';
 import { WaterSystem } from '../render/water.js';
 import { Fireflies, Mist, PuffPool } from '../render/effects.js';
-import { loadSpriteTextures } from '../render/foliage.js';
 import { Player } from './player.js';
 import { BuildSystem, ITEM_LIST, ITEMS, updateGlowMaterial } from './build.js';
 import { Audio } from './audio.js';
 import { saveGame, loadGame, clearSave, saveSettings, loadSettings } from './save.js';
 
-const SPRITES = {
-  grass_tuft: 'assets/sprites/grass_tuft.png',
-  fern_card: 'assets/sprites/fern_card.png',
-  foliage_broadleaf: 'assets/sprites/foliage_broadleaf.png',
-  pine_branch: 'assets/sprites/pine_branch.png',
-  mushrooms: 'assets/sprites/mushrooms.png',
-};
 
 const NODE_YIELD = {
   tree: { wood: 2 },
@@ -101,13 +93,9 @@ export class Game {
     this.terrain = buildTerrainMesh(this.world);
     this.engine.scene.add(this.terrain);
 
-    ui.setLoading(0.56, 'Growing the forest…');
+    ui.setLoading(0.62, 'Planting every leaf…');
     await nextFrame();
-    this.textures = await loadSpriteTextures(SPRITES, (f) => ui.setLoading(0.56 + f * 0.12, 'Growing the forest…'));
-
-    ui.setLoading(0.72, 'Planting every leaf…');
-    await nextFrame();
-    this.vegetation = new Vegetation(this.engine.scene, this.world, this.textures);
+    this.vegetation = new Vegetation(this.engine.scene, this.world);
 
     ui.setLoading(0.86, 'Filling the river…');
     await nextFrame();
