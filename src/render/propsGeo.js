@@ -6,6 +6,10 @@
 import * as THREE from 'three';
 import { PALETTE } from '../terrain/terrain.js';
 
+const mix3 = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+const scale3 = (c, k) => [c[0] * k, c[1] * k, c[2] * k];
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
 export function paint(geo, fn) {
   const pos = geo.getAttribute('position');
   const nrm = geo.getAttribute('normal');
@@ -82,8 +86,17 @@ export function rockGeometry(seed = 1) {
     const up = Math.max(0, n.y);
     let c = mix(P.rockShadow, P.rockMid, Math.min(1, up * 1.4 + 0.12));
     c = mix(c, P.rockLight, Math.max(0, (up - 0.45) / 0.55));
-    const j = 0.9 + hash(Math.round(p.x * 16), Math.round(p.y * 16 + seed), Math.round(p.z * 16)) * 0.16;
-    return [c[0] * j, c[1] * j, c[2] * j];
+    // stone in this valley is never bare: moss creeps up from the base and
+    // pools in the hollows on top, and pale lichen freckles the sunlit faces
+    const g1 = hash(Math.round(p.x * 7), Math.round(p.y * 7 + seed), Math.round(p.z * 7));
+    const g2 = hash(Math.round(p.x * 21 + seed), Math.round(p.y * 21), Math.round(p.z * 21));
+    const moss = clamp01((up - 0.15) * 1.25 + (g1 - 0.5) * 0.9 + 0.18);
+    const mossCol = mix3(P.grassShade, P.grassMid, g2 * 0.8 + 0.1);
+    c = mix3(c, mossCol, moss * 0.62);
+    const lichen = clamp01((g2 - 0.72) * 3.2) * Math.max(0, up);
+    c = mix3(c, P.paleStone, lichen * 0.5);
+    const j = 0.9 + g2 * 0.16;
+    return scale3(c, j);
   });
   return flat;
 }

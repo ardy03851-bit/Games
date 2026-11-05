@@ -159,6 +159,120 @@ export function paintLeafMass(o) {
   return { size, data: out };
 }
 
+/* ------------------------------------------------------- ground paint tile */
+/**
+ * A seamless tile of painterly ground: overlapping soft dabs, short blade
+ * strokes and grit. It is stored around mid-grey so the terrain shader can use
+ * it as a *modulation* — multiply by (sample * 2 - 1) — which keeps the vertex
+ * palette in charge of hue while the texture supplies the brushwork.
+ *
+ * Everything wraps, so the tile repeats without a seam.
+ */
+export function paintGroundTile(size = 256, seed = 501) {
+  const rnd = mulberry(seed);
+  const buf = new Float32Array(size * size * 3).fill(0.5);
+
+  const wrapStamp = (x, y, rx, ry, ang, delta, alpha) => {
+    const cos = Math.cos(ang), sin = Math.sin(ang);
+    const rr = Math.max(rx, ry) + 1;
+    for (let oy = -1; oy <= 1; oy++) {
+      for (let ox = -1; ox <= 1; ox++) {
+        const bx = x + ox * size, by = y + oy * size;
+        if (bx + rr < 0 || bx - rr > size || by + rr < 0 || by - rr > size) continue;
+        const x0 = Math.max(0, Math.floor(bx - rr)), x1 = Math.min(size - 1, Math.ceil(bx + rr));
+        const y0 = Math.max(0, Math.floor(by - rr)), y1 = Math.min(size - 1, Math.ceil(by + rr));
+        for (let py = y0; py <= y1; py++) {
+          const dy = py - by;
+          for (let px = x0; px <= x1; px++) {
+            const dx = px - bx;
+            const u = (dx * cos + dy * sin) / rx;
+            const v = (-dx * sin + dy * cos) / ry;
+            const d = u * u + v * v;
+            if (d > 1) continue;
+            const fall = (1 - d) * (1 - d);
+            const i = (py * size + px) * 3;
+            const k = alpha * fall;
+            buf[i] += delta[0] * k;
+            buf[i + 1] += delta[1] * k;
+            buf[i + 2] += delta[2] * k;
+          }
+        }
+      }
+    }
+  };
+
+  // --- broad soft dabs: the base brushwork
+  for (let i = 0; i < 520; i++) {
+    const light = rnd() < 0.5;
+    const amt = (light ? 1 : -1) * (0.05 + rnd() * 0.13);
+    const delta = [
+      amt * (light ? 1.0 : 0.9),
+      amt * (light ? 1.02 : 1.0),
+      amt * (light ? 0.72 : 1.18),
+    ];
+    wrapStamp(
+      rnd() * size, rnd() * size,
+      4 + rnd() * 16, 2 + rnd() * 7,
+      rnd() * Math.PI,
+      delta, 0.55,
+    );
+  }
+
+  // --- blade strokes: short bright flicks, the thing that reads as grass from
+  // a distance
+  for (let i = 0; i < 1500; i++) {
+    const light = rnd() < 0.62;
+    const amt = (light ? 1 : -1) * (0.10 + rnd() * 0.22);
+    wrapStamp(
+      rnd() * size, rnd() * size,
+      1.1 + rnd() * 2.2, 3 + rnd() * 8,
+      rnd() * Math.PI,
+      [amt, amt * 1.04, amt * 0.6],
+      0.85,
+    );
+  }
+
+  // --- dry flecks: tiny warm specks that break the green
+  for (let i = 0; i < 420; i++) {
+    const amt = 0.10 + rnd() * 0.18;
+    wrapStamp(
+      rnd() * size, rnd() * size,
+      0.9 + rnd() * 1.6, 0.9 + rnd() * 1.6,
+      0, [amt * 1.3, amt * 1.0, amt * 0.2], 0.9,
+    );
+  }
+
+  // --- grit / paper tooth
+  const out = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 3;
+      const o = (y * size + x) * 4;
+      const n = (rnd() - 0.5) * 0.05;
+      out[o] = Math.max(0, Math.min(255, (buf[i] + n) * 255));
+      out[o + 1] = Math.max(0, Math.min(255, (buf[i + 1] + n) * 255));
+      out[o + 2] = Math.max(0, Math.min(255, (buf[i + 2] + n) * 255));
+      out[o + 3] = 255;
+    }
+  }
+  return { size, data: out };
+}
+
+export function groundTexture() {
+  if (cache.has('ground')) return cache.get('ground');
+  const raw = paintGroundTile();
+  const tex = new THREE.DataTexture(raw.data, raw.size, raw.size, THREE.RGBAFormat);
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.wrapS = THREE.RepeatWrapping;
+  tex.wrapT = THREE.RepeatWrapping;
+  tex.needsUpdate = true;
+  tex.userData.cpu = raw;
+  cache.set('ground', tex);
+  return tex;
+}
+
 /* ------------------------------------------------------------- the library */
 const cache = new Map();
 

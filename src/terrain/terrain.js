@@ -34,11 +34,11 @@ const CELL = WORLD.size / (WORLD.grid - 1);
 // ---------------------------------------------------------------------------
 export const PALETTE = {
   // ---- grass: five painted greens, from sun-struck tips to near-black shade
-  grassSun: [0.494, 0.596, 0.337],   // #7e9856
-  grassLight: [0.427, 0.545, 0.298], // #6d8b4c
-  grassMid: [0.373, 0.502, 0.275],   // #5f8046
-  grassDeep: [0.271, 0.408, 0.200],  // #456833
-  grassShade: [0.180, 0.290, 0.149], // #2e4a26
+  grassSun: [0.556, 0.612, 0.318],   // #8e9c51 — sun-cured, yellow side
+  grassLight: [0.463, 0.556, 0.278], // #768e47
+  grassMid: [0.376, 0.494, 0.251],   // #607e40
+  grassDeep: [0.251, 0.396, 0.184],  // #40652f
+  grassShade: [0.145, 0.267, 0.157], // #254428 — cool, blue-green shadow
   grassDark: [0.106, 0.184, 0.094],  // #1b2f18
 
   // ---- bare earth: warm ochre, the terraces in the reference paintings
@@ -71,9 +71,9 @@ export const PALETTE = {
   barkDark: [0.220, 0.145, 0.094],
 
   // ---- conifer needles, almost black in the shade
-  pineDark: [0.106, 0.176, 0.110],
-  pineMid: [0.173, 0.271, 0.149],
-  pineLight: [0.267, 0.412, 0.227],
+  pineDark: [0.137, 0.216, 0.137],
+  pineMid: [0.212, 0.325, 0.180],
+  pineLight: [0.318, 0.478, 0.259],
 
   sun: [1.0, 0.937, 0.784],
   fog: [0.784, 0.741, 0.588],

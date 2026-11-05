@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three';
 import { createTerrainMaterial } from './materials.js';
+import { groundTexture } from './textures.js';
 
 export function buildTerrainMesh(world) {
   const N = world.grid;
@@ -56,6 +57,7 @@ export function buildTerrainMesh(world) {
   geo.computeBoundingSphere();
 
   const mat = createTerrainMaterial();
+  mat.uniforms.uGround.value = groundTexture();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.matrixAutoUpdate = false;
   mesh.updateMatrix();
