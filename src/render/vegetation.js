@@ -91,7 +91,7 @@ export class Vegetation {
 
     const grass = this.field({
       texture: tex.grass_tuft, billboard: true, sway: 1.35, alphaCut: 0.38,
-      brightness: 0.86, occlude: 0.85,
+      brightness: 0.78, occlude: 0.85,
     }, 'grass');
     const fern = this.field({
       texture: tex.fern_card, billboard: true, sway: 0.42, alphaCut: 0.4,
@@ -107,7 +107,7 @@ export class Vegetation {
     }, 'canopy');
     const pine = this.field({
       texture: tex.pine_branch, billboard: false, sway: 0.5, alphaCut: 0.4,
-      brightness: 1.0, occlude: 0.9, droop: 0.35,
+      brightness: 1.22, occlude: 0.9, droop: 0.35,
     }, 'pinefronds');
     const shrooms = this.field({
       texture: tex.mushrooms, billboard: true, sway: 0.05, alphaCut: 0.45,
@@ -116,8 +116,8 @@ export class Vegetation {
 
     // ---------------------------------------------------------------- grass
     for (const t of props.tufts) {
-      const h = (0.58 + t.scale * 0.62);
-      const w = h * 0.52;
+      const h = (0.64 + t.scale * 0.68);
+      const w = h * 0.56;
       grass.add({ x: t.x, y: t.y - 0.06, z: t.z },
         { sx: w * 1.02, sy: h },
         { phase: (t.x * 1.7 + t.z * 2.3) % 6.283, sway: 0.85 + t.scale * 0.5, tint: tintFor(t.hue), lean: t.lean });

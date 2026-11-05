@@ -1,7 +1,7 @@
 /**
  * Water: a ribbon that follows the tiered river, plus explicit curtains at
- * every waterfall. The shader paints golden shallows, drifting sparkle and
- * foam on the banks; the falls get streaky vertical curtains and a foam lip.
+ * every waterfall. The shader paints dark teal water, pale shallows, drifting
+ * sparkle and foam on the banks; the falls get streaky vertical curtains and a foam lip.
  */
 import * as THREE from 'three';
 import { createWaterMaterial } from './materials.js';

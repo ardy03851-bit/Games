@@ -53,10 +53,10 @@ export const PALETTE = {
 
   paleStone: [0.847, 0.733, 0.518],  // #d8bb84 sun-bleached tops
 
-  waterShallow: [0.859, 0.820, 0.596], // #dbd198
-  waterMid: [0.729, 0.694, 0.478],     // #b9b17a
-  waterDeep: [0.412, 0.451, 0.341],    // #697357
-  waterFoam: [0.949, 0.937, 0.827],    // #f2efd3
+  waterShallow: [0.478, 0.588, 0.545], // #7a968b
+  waterMid: [0.318, 0.435, 0.427],     // #516f6d
+  waterDeep: [0.157, 0.267, 0.302],    // #28444d
+  waterFoam: [0.933, 0.945, 0.871],    // #eef1de
 
   wood: [0.545, 0.408, 0.259],
   woodLight: [0.729, 0.588, 0.396],
@@ -560,7 +560,13 @@ export function generateWorld(seed = WORLD.seed) {
       }
 
       // ---- clearing: trodden, slightly paler grass
-      if (fm > 0.001) col = mix3(col, PALETTE.grassSun, fm * 0.14);
+      if (fm > 0.001) col = mix3(col, PALETTE.grassSun, fm * 0.12);
+
+      // ---- painterly mottle: break the flat wash into brush-ish patches
+      const brush = noiseB.fbm(wx * 0.38, wz * 0.38, 2);
+      const blotch = noiseA.fbm(wx * 0.11 + 21.0, wz * 0.11 - 13.0, 2);
+      const mottle = 1.0 + brush * 0.052 + blotch * 0.045;
+      col = [col[0] * mottle, col[1] * (mottle + blotch * 0.02), col[2] * (mottle - blotch * 0.03)];
 
       // ---- exposed stone on the cliff risers, with horizontal strata
       const rockAmount = smoothstep(0.42, 0.62, slope);

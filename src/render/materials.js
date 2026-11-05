@@ -321,9 +321,9 @@ export function createWaterMaterial(opts = {}) {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...commonUniforms(),
-      uDeep: { value: new THREE.Color(0.412, 0.451, 0.341) },
-      uShallow: { value: new THREE.Color(0.878, 0.839, 0.624) },
-      uFoam: { value: new THREE.Color(0.965, 0.953, 0.847) },
+      uDeep: { value: new THREE.Color(0.157, 0.267, 0.302) },
+      uShallow: { value: new THREE.Color(0.478, 0.588, 0.545) },
+      uFoam: { value: new THREE.Color(0.933, 0.945, 0.871) },
       uFlow: { value: opts.flow ?? 0.35 },
       uFall: { value: opts.fall ? 1 : 0 },
       uOpacity: { value: 1 },
@@ -355,18 +355,21 @@ export function createWaterMaterial(opts = {}) {
       void main() {
         float t = uTime;
         vec2 uv = vUv;
-        // flowing golden water
+        // cool river water against the warm banks
         float n1 = vnoise(vec2(uv.x * 26.0, uv.y * 9.0 - t * uFlow * 2.2));
         float n2 = vnoise(vec2(uv.x * 55.0 + 7.0, uv.y * 20.0 - t * uFlow * 4.4));
         float sparkle = smoothstep(0.72, 0.92, n1 * 0.6 + n2 * 0.55);
         float streak = smoothstep(0.55, 0.95, n2);
 
-        vec3 col = mix(uDeep, uShallow, 0.42 + 0.5 * n1);
-        col += uFoam * sparkle * 0.85;
-        col += uFoam * streak * 0.28;
+        // cross-channel depth ramp: pale on the shallows, dark down the middle
+        float edge = min(uv.x, 1.0 - uv.x);
+        float depthBand = smoothstep(0.02, 0.30, edge);
+        vec3 col = mix(uShallow, uDeep, depthBand * (0.72 + 0.28 * n1));
+        col = mix(col, uShallow, 0.22 * n2);
+        col += uFoam * sparkle * 0.75;
+        col += uFoam * streak * 0.22;
 
         // shore foam on the ribbon edges
-        float edge = min(uv.x, 1.0 - uv.x);
         float foam = smoothstep(0.16, 0.0, edge) * (0.55 + 0.45 * sin(uv.y * 90.0 + t * 3.0));
         col = mix(col, uFoam, clamp(foam, 0.0, 0.85));
 
