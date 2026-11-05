@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 
 export const CELL = 1.0;      // grid pitch in world units
-export const LAYER = 0.62;    // block height
+export const LAYER = 0.60;    // block height
 
 // ---------------------------------------------------------------------------
 // paints
@@ -149,13 +149,21 @@ class Geo {
 // ---------------------------------------------------------------------------
 // shapes
 // ---------------------------------------------------------------------------
-const S = 0.94;    // footprint of a solid piece
+const S = 0.98;    // footprint of a solid piece
 const H = LAYER;   // one layer
 
 export const SHAPES = [
   {
     id: 'block', name: 'Block', cat: 'solid', cost: 1,
-    build(g, t) { g.cube(0, 0, 0, S, H, S, t); },
+    build(g, t) {
+      // two courses with a hairline joint between them, and a bevelled cap so
+      // a wall of blocks reads as masonry instead of a smooth extruded slab
+      const low = { ...t, top: t.mid, light: t.light, mid: t.mid, dark: t.dark };
+      g.box(-S / 2, 0, -S / 2, S / 2, H * 0.48, S / 2, low);
+      g.box(-S / 2, H * 0.48, -S / 2, S / 2, H * 0.52, S / 2, { ...t, top: t.deep, light: t.dark, mid: t.dark, dark: t.deep });
+      g.box(-S / 2, H * 0.52, -S / 2, S / 2, H, S / 2, t);
+      g.box(-S / 2 + 0.06, H, -S / 2 + 0.06, S / 2 - 0.06, H + 0.03, S / 2 - 0.06, { ...t, top: t.top, light: t.light, mid: t.mid, dark: t.mid });
+    },
   },
   {
     id: 'slab', name: 'Slab', cat: 'solid', cost: 1,
@@ -167,7 +175,13 @@ export const SHAPES = [
   },
   {
     id: 'wall', name: 'Wall', cat: 'build', cost: 1,
-    build(g, t) { g.box(-S / 2, 0, -0.13, S / 2, H, 0.13, t); },
+    build(g, t) {
+      const th = 0.15;
+      g.box(-S / 2, 0, -th, S / 2, H * 0.46, th, { ...t, top: t.mid });
+      g.box(-S / 2, H * 0.46, -th, S / 2, H * 0.50, th, { ...t, top: t.deep, light: t.dark, mid: t.dark });
+      g.box(-S / 2, H * 0.50, -th, S / 2, H, th, t);
+      g.box(-S / 2 - 0.03, H, -th - 0.04, S / 2 + 0.03, H + 0.05, th + 0.04, { ...t, top: t.top });
+    },
   },
   {
     id: 'pillar', name: 'Pillar', cat: 'build', cost: 2,

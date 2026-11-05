@@ -10,13 +10,14 @@
 import * as THREE from 'three';
 import { PALETTE, WORLD } from '../terrain/terrain.js';
 import { QUALITY } from '../core/shared.js';
-import { createInstancedSolidMaterial } from './materials.js';
+import { createInstancedSolidMaterial, createLeafCardMaterial } from './materials.js';
+import { leafTexture } from './textures.js';
 import {
   rockGeometry, rockCapGeometry, trunkGeometry, logGeometry, stumpGeometry,
 } from './propsGeo.js';
 import {
   grassTuftGeometry, fernGeometry, bushGeometry, canopyGeometry,
-  pineGeometry, mushroomGeometry,
+  pineGeometry, mushroomGeometry, leafCardSet,
 } from './plants.js';
 
 const P = PALETTE;
@@ -138,6 +139,13 @@ export class Vegetation {
     // --------------------------------------------------------------- bushes
     const bushGeos = [bushGeometry(3), bushGeometry(8)];
     const bushBatches = bushGeos.map((g, i) => new SolidBatch(g, solidMat, `bushes${i}`));
+    // painted leaf cards wrap the solid core of every bush
+    const bushCardMat = createLeafCardMaterial({
+      texture: leafTexture('bush'), brightness: 1.02, alphaTest: 0.38,
+    });
+    const bushCards = new SolidBatch(
+      leafCardSet({ count: 6, radius: 0.92, seed: 21, size: 0.62 }), bushCardMat, 'bushcards',
+    );
     for (const b of props.bushes) {
       const s = b.scale;
       e.set(0, b.rot, 0);
@@ -147,6 +155,11 @@ export class Vegetation {
         new THREE.Vector3(1.15 * s + 0.35, 1.0 * s + 0.35, 1.15 * s + 0.35),
         q.clone(), [b.hue * TWO_PI, 0.012 * s],
       );
+      bushCards.add(
+        new THREE.Vector3(b.x, b.y + 0.28 + s * 0.2, b.z),
+        new THREE.Vector3(1.15 * s + 0.35, 1.0 * s + 0.35, 1.15 * s + 0.35),
+        q.clone(), [b.hue * TWO_PI, 0.0],
+      );
       shadowItems.push({ x: b.x, z: b.z, y: b.y, r: 0.8 * s + 0.25, a: 0.34 });
       this.nodes.bushes.push({ x: b.x, y: b.y, z: b.z, r: 1.0 * s, id: b.id, kind: 'bush' });
     }
@@ -155,6 +168,15 @@ export class Vegetation {
     const trunkBatch = new SolidBatch(trunkGeometry(), solidMat, 'trunks');
     const canopyGeos = [canopyGeometry(11), canopyGeometry(23), canopyGeometry(31)];
     const canopyBatches = canopyGeos.map((g, i) => new SolidBatch(g, solidMat, `canopy${i}`));
+    // two card sets, two painted leaf textures, layered over every crown
+    const cardMats = [
+      createLeafCardMaterial({ texture: leafTexture('canopyA'), brightness: 1.0, alphaTest: 0.40 }),
+      createLeafCardMaterial({ texture: leafTexture('canopyB'), brightness: 1.06, alphaTest: 0.40 }),
+    ];
+    const canopyCards = [
+      new SolidBatch(leafCardSet({ count: 8, radius: 1.0, seed: 4, size: 0.60 }), cardMats[0], 'canopyCardsA'),
+      new SolidBatch(leafCardSet({ count: 7, radius: 0.95, seed: 15, size: 0.54 }), cardMats[1], 'canopyCardsB'),
+    ];
     const pineGeos = [
       pineGeometry({ layers: 7, seed: 5 }),
       pineGeometry({ layers: 8, seed: 12 }),
@@ -178,6 +200,11 @@ export class Vegetation {
           new THREE.Vector3(t.x, canopyY, t.z),
           new THREE.Vector3(canopyR * 1.05, canopyR * 0.95, canopyR * 1.05),
           q.clone(), [t.swayPhase, 0.008],
+        );
+        canopyCards[(t.hue * 2) | 0].add(
+          new THREE.Vector3(t.x, canopyY, t.z),
+          new THREE.Vector3(canopyR * 1.05, canopyR * 0.95, canopyR * 1.05),
+          q.clone(), [t.swayPhase, 0.0],
         );
         this.nodes.trees.push({
           x: t.x, y: t.y, z: t.z, r: 0.8 * s, id: t.id, kind: 'tree', trunkH,
@@ -256,10 +283,12 @@ export class Vegetation {
     this.batches = {
       tuftBatches, fernBatches, bushBatches, canopyBatches, pineBatches,
       trunkBatch, capBatch, logBatch, stumpBatch, rockBatches, mushroomBatch,
+      bushCards, canopyCards,
     };
     for (const b of [
       ...tuftBatches, ...fernBatches, ...bushBatches, ...canopyBatches, ...pineBatches,
       trunkBatch, ...rockBatches, capBatch, logBatch, stumpBatch, mushroomBatch,
+      bushCards, ...canopyCards,
     ]) {
       this.meshes.push(b.build(this.scene));
     }

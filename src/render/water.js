@@ -4,7 +4,7 @@
  * sparkle and foam on the banks; the falls get streaky vertical curtains and a foam lip.
  */
 import * as THREE from 'three';
-import { createWaterMaterial } from './materials.js';
+import { createWaterMaterial, createRiverbedMaterial } from './materials.js';
 
 export class WaterSystem {
   constructor(scene, world) {
@@ -40,13 +40,15 @@ export class WaterSystem {
       const len = Math.hypot(dx, dz) || 1;
       dx /= len; dz /= len;
       const nx = -dz, nz = dx;
-      const half = s.width * 0.5;
+      // the carved channel is a little wider than the water: keep the ribbon
+      // inside it so no part of the surface is bitten off by the bank
+      const half = s.width * 0.30;
       const step = Math.hypot(s.x - prev.x, s.z - prev.z);
       dist += step;
       current.push({
         lx: s.x + nx * half, lz: s.z + nz * half,
         rx: s.x - nx * half, rz: s.z - nz * half,
-        y: s.y + 0.04, v: dist * 0.12,
+        y: s.y + 0.12, v: dist * 0.12,
       });
     }
     if (current.length) strips.push(current);
@@ -81,6 +83,40 @@ export class WaterSystem {
     mesh.renderOrder = 2;
     this.group.add(mesh);
     this.ribbonMesh = mesh;
+
+    // ---- wet bed under the water, a shade wider and a shade lower, so the
+    // channel reads as carved into the ground instead of laid on top of it
+    const bedPositions = [];
+    const bedUvs = [];
+    for (const strip of strips) {
+      for (let i = 0; i < strip.length - 1; i++) {
+        const a = strip[i], b = strip[i + 1];
+        const ax = (a.lx + a.rx) * 0.5, az = (a.lz + a.rz) * 0.5;
+        const bx2 = (b.lx + b.rx) * 0.5, bz2 = (b.lz + b.rz) * 0.5;
+        const ex = 1.55, ey = -0.02;
+        const quad = [
+          [ax + (a.lx - ax) * ex, a.y + ey, az + (a.lz - az) * ex, 0, a.v],
+          [ax + (a.rx - ax) * ex, a.y + ey, az + (a.rz - az) * ex, 1, a.v],
+          [bx2 + (b.lx - bx2) * ex, b.y + ey, bz2 + (b.lz - bz2) * ex, 0, b.v],
+          [bx2 + (b.lx - bx2) * ex, b.y + ey, bz2 + (b.lz - bz2) * ex, 0, b.v],
+          [ax + (a.rx - ax) * ex, a.y + ey, az + (a.rz - az) * ex, 1, a.v],
+          [bx2 + (b.rx - bx2) * ex, b.y + ey, bz2 + (b.rz - bz2) * ex, 1, b.v],
+        ];
+        for (const q of quad) {
+          bedPositions.push(q[0], q[1], q[2]);
+          bedUvs.push(q[3], q[4]);
+        }
+      }
+    }
+    const bedGeo = new THREE.BufferGeometry();
+    bedGeo.setAttribute('position', new THREE.Float32BufferAttribute(bedPositions, 3));
+    bedGeo.setAttribute('uv', new THREE.Float32BufferAttribute(bedUvs, 2));
+    bedGeo.computeVertexNormals();
+    const bed = new THREE.Mesh(bedGeo, createRiverbedMaterial());
+    bed.frustumCulled = false;
+    bed.renderOrder = 1;
+    this.group.add(bed);
+    this.bedMesh = bed;
 
     // ---- waterfall curtains
     const falls = this.world.waterPieces.falls;

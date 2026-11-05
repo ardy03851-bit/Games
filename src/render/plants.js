@@ -324,3 +324,57 @@ export function mushroomGeometry(seed = 9) {
   return p.build();
 }
 
+/**
+ * A set of camera-facing leaf cards, in crown-local space.
+ *
+ * One geometry holds several quads; the vertex shader billboards each of them
+ * around the centre and flutters it on its own phase. Layered over the solid
+ * lobes they turn a faceted blob into a soft, brushy crown.
+ */
+export function leafCardSet({ count = 6, radius = 1, seed = 1, size = 0.6 } = {}) {
+  const pos = [];
+  const uv = [];
+  const nor = [];
+  const offsets = [];
+  const sizes = [];
+  const phases = [];
+
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  for (let i = 0; i < count; i++) {
+    const r = hash(seed, i, 4);
+    const r2 = hash(seed, i, 5);
+    const r3 = hash(seed, i, 6);
+    // shell distribution: keep the cards out of the very centre
+    const y = (i / Math.max(1, count - 1)) * 1.5 - 0.75 + (r - 0.5) * 0.25;
+    const ring = Math.sqrt(Math.max(0, 1 - y * y)) * (0.55 + r2 * 0.5);
+    const a = i * golden + r3 * 0.6;
+    const ox = Math.cos(a) * ring * radius;
+    const oz = Math.sin(a) * ring * radius;
+    const oy = y * radius * 0.85;
+
+    const s = size * (0.72 + r * 0.55);
+    const corners = [
+      [-1, -1, 1], [1, -1, 1], [1, 1, 1], [-1, 1, 1],
+    ];
+    const uvs = [[0, 0], [1, 0], [1, 1], [0, 1]];
+    for (const k of [0, 1, 2, 0, 2, 3]) {
+      pos.push(corners[k][0], corners[k][1], corners[k][2]);
+      uv.push(uvs[k][0], uvs[k][1]);
+      nor.push(0, 1, 0);
+      offsets.push(ox, oy, oz);
+      sizes.push(s);
+      phases.push(r3 + i * 0.11);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute('aOffset', new THREE.Float32BufferAttribute(offsets, 3));
+  geo.setAttribute('aSize', new THREE.Float32BufferAttribute(sizes, 1));
+  geo.setAttribute('aPhase', new THREE.Float32BufferAttribute(phases, 1));
+  geo.computeBoundingSphere();
+  geo.boundingSphere.radius *= 2;
+  return geo;
+}
