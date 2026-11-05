@@ -21,6 +21,24 @@ const ICONS = {
 
 const RES_LABEL = { wood: 'wood', stone: 'stone', fiber: 'fiber' };
 
+const SHAPE_ICONS = {
+  block: `<svg viewBox="0 0 40 40"><path d="M8 15 20 9l12 6v11l-12 6-12-6z" fill="#8a663c"/><path d="M8 15l12 6 12-6" stroke="#b08a55" stroke-width="2" fill="none"/><path d="M20 21v11" stroke="#6b4c2c" stroke-width="2"/></svg>`,
+  slab: `<svg viewBox="0 0 40 40"><path d="M7 22 20 16l13 6-13 6z" fill="#a57f4d"/><path d="M7 22v4l13 6 13-6v-4" fill="#6b4c2c"/></svg>`,
+  floor: `<svg viewBox="0 0 40 40"><path d="M6 24 20 18l14 6-14 6z" fill="#c9a878"/><path d="M12 21l4 2M20 18l4 2M26 22l4 2" stroke="#8a663c" stroke-width="1.6"/></svg>`,
+  wall: `<svg viewBox="0 0 40 40"><rect x="7" y="12" width="26" height="20" rx="2" fill="#8a97ab"/><path d="M7 19h26M7 26h26M16 12v7M26 19v7M15 26v6M27 12v7" stroke="#5e6a7d" stroke-width="1.6"/></svg>`,
+  pillar: `<svg viewBox="0 0 40 40"><rect x="13" y="8" width="14" height="4" rx="1" fill="#9aa5b6"/><rect x="16" y="12" width="8" height="18" fill="#7d8899"/><rect x="12" y="30" width="16" height="4" rx="1" fill="#9aa5b6"/></svg>`,
+  arch: `<svg viewBox="0 0 40 40"><path d="M9 33V17a11 11 0 0 1 22 0v16" stroke="#8a97ab" stroke-width="6" fill="none" stroke-linecap="round"/></svg>`,
+  window: `<svg viewBox="0 0 40 40"><rect x="7" y="9" width="26" height="22" rx="2" fill="#8a97ab"/><rect x="14" y="15" width="12" height="10" rx="1" fill="#ffe9b0"/><path d="M20 15v10M14 20h12" stroke="#5e6a7d" stroke-width="1.6"/></svg>`,
+  ramp: `<svg viewBox="0 0 40 40"><path d="M8 32h24L8 14z" fill="#a57f4d"/><path d="M8 32 32 32" stroke="#6b4c2c" stroke-width="2"/></svg>`,
+  stair: `<svg viewBox="0 0 40 40"><path d="M8 32h8v-6h8v-6h8v-6h-8v6h-8v6H8z" fill="#a57f4d"/></svg>`,
+  roof: `<svg viewBox="0 0 40 40"><path d="M6 26 20 9l14 17z" fill="#b4763f"/><path d="M6 26h28" stroke="#8a5729" stroke-width="3"/></svg>`,
+  fence: `<svg viewBox="0 0 40 40"><path d="M12 10v22M28 10v22" stroke="#6b4c2c" stroke-width="4" stroke-linecap="round"/><path d="M8 16h24M8 25h24" stroke="#8a663c" stroke-width="3.6" stroke-linecap="round"/></svg>`,
+  lantern: `<svg viewBox="0 0 40 40"><rect x="18.5" y="6" width="3" height="24" rx="1.5" fill="#4c3a26"/><rect x="13" y="9" width="14" height="12" rx="4" fill="#ffe0a0" stroke="#4c3a26" stroke-width="2"/></svg>`,
+  planter: `<svg viewBox="0 0 40 40"><rect x="8" y="24" width="24" height="10" rx="2" fill="#8a663c"/><circle cx="14" cy="20" r="5" fill="#5f8046"/><circle cx="22" cy="17" r="6" fill="#6f8f4e"/><circle cx="29" cy="21" r="4" fill="#4a6b41"/></svg>`,
+  banner: `<svg viewBox="0 0 40 40"><rect x="10" y="6" width="3" height="28" rx="1.5" fill="#4c3a26"/><path d="M13 9h18l-4 6 4 6H13z" fill="#a83a34"/></svg>`,
+};
+
+
 export class UI {
   constructor(callbacks = {}) {
     this.cb = callbacks;
@@ -39,6 +57,14 @@ export class UI {
       trayItems: document.getElementById('build-items'),
       trayClose: document.getElementById('btn-tray-close'),
       trayHint: document.getElementById('tray-hint'),
+      toolRow: document.getElementById('tool-row'),
+      paintRow: document.getElementById('paint-row'),
+      layerLabel: document.getElementById('layer-label'),
+      layerDown: document.getElementById('btn-layer-down'),
+      layerUp: document.getElementById('btn-layer-up'),
+      rotate2: document.getElementById('btn-rotate-2'),
+      undoBtn: document.getElementById('btn-undo'),
+      redoBtn: document.getElementById('btn-redo'),
       rotate: document.getElementById('btn-rotate'),
       remove: document.getElementById('btn-remove'),
       cancel: document.getElementById('btn-cancel'),
@@ -82,6 +108,11 @@ export class UI {
     el.help?.addEventListener('click', () => this.showHelp(true));
     el.helpClose?.addEventListener('click', () => this.showHelp(false));
     el.quality?.addEventListener('click', () => cb.onQuality?.());
+    el.layerDown?.addEventListener('click', () => cb.onLayer?.(-1));
+    el.layerUp?.addEventListener('click', () => cb.onLayer?.(1));
+    el.rotate2?.addEventListener('click', () => cb.onRotate?.());
+    el.undoBtn?.addEventListener('click', () => cb.onUndo?.());
+    el.redoBtn?.addEventListener('click', () => cb.onRedo?.());
 
     this.bindStick();
   }
@@ -158,24 +189,103 @@ export class UI {
     if (this.el.continueBtn) this.el.continueBtn.classList.toggle('hidden', !has);
   }
 
-  buildTray(items) {
+  /**
+   * The builder panel: tools, paints, pieces. Every control is a big tap
+   * target; nothing needs a long press or a drag to discover.
+   */
+  buildBuilder(shapes, paints, tools) {
+    this.shapes = shapes;
+    this.paints = paints;
+
+    // tools ---------------------------------------------------------------
+    const trow = this.el.toolRow;
+    if (trow) {
+      trow.innerHTML = '';
+      this.toolBtns = new Map();
+      for (const tool of tools) {
+        const b = document.createElement('button');
+        b.className = 'tool-chip';
+        b.dataset.id = tool.id;
+        b.textContent = tool.name;
+        b.addEventListener('click', () => this.cb.onTool?.(tool.id));
+        trow.appendChild(b);
+        this.toolBtns.set(tool.id, b);
+      }
+      this.setTool('build');
+    }
+
+    // paints --------------------------------------------------------------
+    const prow = this.el.paintRow;
+    if (prow) {
+      prow.innerHTML = '';
+      this.paintBtns = new Map();
+      for (const paint of paints) {
+        const b = document.createElement('button');
+        b.className = 'paint-swatch';
+        b.dataset.id = paint.id;
+        b.title = paint.name;
+        b.style.setProperty('--swatch', paint.hex);
+        b.innerHTML = `<span class="dot"></span><span class="pname">${paint.name}</span>`;
+        b.addEventListener('click', () => this.cb.onPickPaint?.(paint.id));
+        prow.appendChild(b);
+        this.paintBtns.set(paint.id, b);
+      }
+      this.setPaint(paints[0].id);
+    }
+
+    // pieces --------------------------------------------------------------
     const wrap = this.el.trayItems;
     if (!wrap) return;
     wrap.innerHTML = '';
     this.cards.clear();
-    for (const item of items) {
-      const btn = document.createElement('button');
-      btn.className = 'item-card';
-      btn.dataset.id = item.id;
-      btn.innerHTML = `
-        <span class="ic">${ICONS[item.icon] || ICONS.tree}</span>
-        <span class="nm">${item.name}</span>
-        <span class="cost">${this.costHtml(item.cost)}</span>`;
-      btn.addEventListener('click', () => this.cb.onSelectItem?.(item.id));
-      wrap.appendChild(btn);
-      this.cards.set(item.id, btn);
+    const groups = [
+      ['solid', 'Pieces'],
+      ['build', 'Structure'],
+      ['decor', 'Details'],
+    ];
+    for (const [cat, label] of groups) {
+      const head = document.createElement('div');
+      head.className = 'tray-group';
+      head.textContent = label;
+      wrap.appendChild(head);
+      for (const shape of shapes.filter((s) => s.cat === cat)) {
+        const btn = document.createElement('button');
+        btn.className = 'item-card';
+        btn.dataset.id = shape.id;
+        btn.innerHTML = `
+          <span class="ic">${SHAPE_ICONS[shape.id] || SHAPE_ICONS.block}</span>
+          <span class="nm">${shape.name}</span>
+          <span class="cost">×${shape.cost}</span>`;
+        btn.addEventListener('click', () => this.cb.onSelectItem?.(shape.id));
+        wrap.appendChild(btn);
+        this.cards.set(shape.id, btn);
+      }
     }
-    this.items = items;
+  }
+
+  setTool(id) {
+    if (!this.toolBtns) return;
+    for (const [key, btn] of this.toolBtns) btn.classList.toggle('selected', key === id);
+  }
+
+  setShape(id) {
+    this.selected = id;
+    for (const [key, btn] of this.cards) btn.classList.toggle('selected', key === id);
+  }
+
+  setPaint(id) {
+    this.paint = id;
+    if (!this.paintBtns) return;
+    for (const [key, btn] of this.paintBtns) btn.classList.toggle('selected', key === id);
+  }
+
+  setLayer(n) {
+    if (this.el.layerLabel) this.el.layerLabel.textContent = `Layer ${n + 1}`;
+  }
+
+  setHistory(undoDepth, redoDepth) {
+    this.el.undoBtn?.classList.toggle('disabled', !undoDepth);
+    this.el.redoBtn?.classList.toggle('disabled', !redoDepth);
   }
 
   costHtml(cost) {

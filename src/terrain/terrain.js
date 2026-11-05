@@ -34,16 +34,16 @@ const CELL = WORLD.size / (WORLD.grid - 1);
 // ---------------------------------------------------------------------------
 export const PALETTE = {
   // ---- grass: five painted greens, from sun-struck tips to near-black shade
-  grassSun: [0.639, 0.741, 0.427],   // #a3bd6d
-  grassLight: [0.510, 0.643, 0.349], // #82a459
-  grassMid: [0.396, 0.529, 0.267],   // #658744
-  grassDeep: [0.298, 0.435, 0.216],  // #4c6f37
-  grassShade: [0.200, 0.322, 0.165], // #33522a
-  grassDark: [0.118, 0.200, 0.106],  // #1e331b
+  grassSun: [0.494, 0.596, 0.337],   // #7e9856
+  grassLight: [0.427, 0.545, 0.298], // #6d8b4c
+  grassMid: [0.373, 0.502, 0.275],   // #5f8046
+  grassDeep: [0.271, 0.408, 0.200],  // #456833
+  grassShade: [0.180, 0.290, 0.149], // #2e4a26
+  grassDark: [0.106, 0.184, 0.094],  // #1b2f18
 
   // ---- bare earth: warm ochre, the terraces in the reference paintings
-  dirtLight: [0.616, 0.478, 0.333],  // #9d7a55
-  dirtMid: [0.478, 0.353, 0.231],    // #7a5a3b
+  dirtLight: [0.588, 0.463, 0.325],  // #967653
+  dirtMid: [0.455, 0.329, 0.212],    // #745436
   dirtDark: [0.333, 0.239, 0.149],   // #553d26
   dirtShadow: [0.208, 0.145, 0.090], // #352517
 

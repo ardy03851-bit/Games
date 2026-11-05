@@ -26,6 +26,7 @@ export const shared = {
   uWindDir: { value: new THREE.Vector2(0.86, 0.32).normalize() },
   uWindStrength: { value: 1.0 },
   uCamRight: { value: new THREE.Vector3(1, 0, 0) },
+  uViewDir: { value: new THREE.Vector3(0, -0.83, -0.55) },
   uNightMix: { value: 0 },
   uResolution: { value: new THREE.Vector2(1, 1) },
 };

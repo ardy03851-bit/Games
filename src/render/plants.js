@@ -150,12 +150,12 @@ export function grassTuftGeometry(opts = {}) {
       angle,
       lean: spread * (0.5 + r2 * 1.6),
       height: h,
-      width: 0.030 + r3 * 0.016,
+      width: 0.026 + r3 * 0.014,
       curve: spread * 0.35,
       base: [(r2 - 0.5) * spread * 1.5, 0, (r3 - 0.5) * spread * 1.5],
-      cBase: scale3(mix(P.grassDeep, P.grassMid, 0.35), tone * 0.94),
-      cMid: scale3(P.grassMid, tone),
-      cTip: scale3(mix(P.grassLight, P.grassSun, 0.35 + r * 0.65), tone * 1.04),
+      cBase: scale3(mix(P.grassMid, P.grassLight, 0.30), tone * 0.98),
+      cMid: scale3(mix(P.grassLight, P.grassSun, 0.30), tone),
+      cTip: scale3(mix(P.grassSun, P.grassLight, 0.15), tone * 1.06),
       seed: seed * 7.3 + i * 1.7,
     });
   }
