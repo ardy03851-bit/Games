@@ -6,6 +6,7 @@
  */
 import * as THREE from 'three';
 import { shared, clamp } from './shared.js';
+import { PostFX } from '../render/postfx.js';
 
 export const CAMERA = {
   fov: 26,
@@ -45,6 +46,10 @@ export class Engine {
     this.camera.position.set(0, 44, 34);
     this.camera.lookAt(0, 0, 0);
 
+    // the painterly repaint pass: created once the scene exists
+    this.postfx = null;
+    this.usePostFX = true;
+
     this.target = new THREE.Vector3(0, 0, 0);
     this.desiredTarget = new THREE.Vector3(0, 0, 0);
     this.shake = 0;
@@ -56,6 +61,7 @@ export class Engine {
 
     this.detectQuality();
     this.resize();
+    this.initPostFX();
   }
 
   detectQuality() {
@@ -72,7 +78,22 @@ export class Engine {
 
   setQuality(level) {
     this.quality = clamp(level, 0, 2);
+    this.postfx?.setQuality(this.quality);
     this.resize();
+  }
+
+  initPostFX() {
+    if (!this.usePostFX || this.postfx) return;
+    try {
+      this.postfx = new PostFX(this.renderer, this.scene, this.camera, { quality: this.quality });
+      this.postfx.setQuality(this.quality);
+      const dpr = this.dprForQuality();
+      this.postfx.setSize(window.innerWidth * dpr, window.innerHeight * dpr);
+    } catch (err) {
+      console.warn('post-processing unavailable, falling back to direct rendering', err);
+      this.postfx = null;
+      this.usePostFX = false;
+    }
   }
 
   dprForQuality() {
@@ -100,6 +121,10 @@ export class Engine {
     this.camera.updateProjectionMatrix();
 
     shared.uResolution.value.set(w * dpr, h * dpr);
+    if (this.postfx) {
+      this.postfx.setQuality(this.quality);
+      this.postfx.setSize(w * dpr, h * dpr);
+    }
     this.applyCamera(true);
   }
 
@@ -122,6 +147,7 @@ export class Engine {
     this.camera.lookAt(t.x, t.y + 0.6 - CAMERA.lookAhead, t.z);
     this.camera.updateMatrixWorld();
     shared.uCamRight.value.setFromMatrixColumn(this.camera.matrixWorld, 0).normalize();
+    shared.uViewDir.value.subVectors(this.camera.position, t).normalize();
   }
 
   follow(point, dt, instant = false) {
@@ -187,7 +213,55 @@ export class Engine {
   }
 
   render() {
+    if (this.postfx) {
+      try {
+        this.postfx.render(this.time);
+        if (!this.postfxChecked) this.verifyPostFX();
+      } catch (err) {
+        console.warn('post-processing failed, drawing directly', err);
+        this.postfx.dispose?.();
+        this.postfx = null;
+        this.renderer.setRenderTarget(null);
+        this.renderer.render(this.scene, this.camera);
+      }
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  /**
+   * Safety net. A shader that fails to compile does not throw — it silently
+   * draws nothing, which on an iPad looks exactly like a broken game. So on the
+   * first frame we compare a direct render with the repainted one and drop the
+   * effect if it came back black.
+   */
+  verifyPostFX() {
+    this.postfxChecked = true;
+    const gl = this.renderer.getContext?.();
+    if (!gl || !gl.readPixels) return;
+    const w = gl.drawingBufferWidth;
+    const h = gl.drawingBufferHeight;
+    const sample = () => {
+      const pts = [[0.5, 0.5], [0.3, 0.35], [0.7, 0.4], [0.5, 0.75]];
+      const buf = new Uint8Array(4);
+      let sum = 0;
+      for (const [fx, fy] of pts) {
+        gl.readPixels(Math.floor(w * fx), Math.floor(h * fy), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+        sum += (buf[0] + buf[1] + buf[2]) / 3;
+      }
+      return sum / pts.length;
+    };
+    this.renderer.setRenderTarget(null);
     this.renderer.render(this.scene, this.camera);
+    const direct = sample();
+    this.postfx.render(this.time);
+    const painted = sample();
+    if (!(direct > 6) || painted < direct * 0.22) {
+      console.warn(`post-processing disabled (direct ${direct.toFixed(1)} → painted ${painted.toFixed(1)})`);
+      this.postfx.dispose?.();
+      this.postfx = null;
+      this.renderer.render(this.scene, this.camera);
+    }
   }
 }
 

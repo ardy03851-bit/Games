@@ -11,7 +11,7 @@ import { Vegetation } from '../render/vegetation.js';
 import { WaterSystem } from '../render/water.js';
 import { Fireflies, Mist, PuffPool } from '../render/effects.js';
 import { Player } from './player.js';
-import { BuildSystem, ITEM_LIST, ITEMS, updateGlowMaterial } from './build.js';
+import { BuildSystem, SHAPES, PAINTS, SHAPE_BY_ID, PAINT_BY_ID, TOOLS, CELL, LAYER } from './build.js';
 import { Audio } from './audio.js';
 import { saveGame, loadGame, clearSave, saveSettings, loadSettings } from './save.js';
 
@@ -56,9 +56,14 @@ export class Game {
     ui.cb.onPlay = (resume) => this.start(resume);
     ui.cb.onReset = () => this.newValley();
     ui.cb.onToggleTray = (force) => this.toggleTray(force);
-    ui.cb.onSelectItem = (id) => this.selectItem(id);
-    ui.cb.onRotate = () => this.rotateGhost();
-    ui.cb.onRemove = () => this.toggleRemove();
+    ui.cb.onSelectItem = (id) => this.pickShape(id);
+    ui.cb.onPickPaint = (id) => this.pickPaint(id);
+    ui.cb.onTool = (id) => this.setTool(id);
+    ui.cb.onLayer = (dir) => this.changeLayer(dir);
+    ui.cb.onUndo = () => this.undo();
+    ui.cb.onRedo = () => this.redo();
+    ui.cb.onRotate = () => this.rotatePiece();
+    ui.cb.onRemove = () => this.setTool('erase');
     ui.cb.onCancel = () => this.cancelPlacing();
     ui.cb.onSound = () => this.toggleSound();
     ui.cb.onStick = (x, y, active) => this.input.setJoystick(x, y, active);
@@ -114,10 +119,26 @@ export class Game {
     await nextFrame();
     this.player = new Player(this.engine.scene, this.world);
     this.resources = { wood: 14, stone: 6, fiber: 8 };
+    this.building = false;
     this.build = new BuildSystem(this.engine.scene, this.world, {
-      resources: this.resources,
-      effects: this.effects,
-      onChange: () => this.syncResources(),
+      getResources: () => this.resources,
+      spend: (cost) => {
+        for (const [k, v] of Object.entries(cost)) this.resources[k] = (this.resources[k] || 0) - v;
+        this.syncResources();
+      },
+      refund: (cost) => {
+        for (const [k, v] of Object.entries(cost)) this.resources[k] = (this.resources[k] || 0) + v;
+        this.syncResources();
+      },
+      onFeedback: (msg) => { this.audio.error(); this.ui.hint(msg, 1700); },
+      onPlace: (cx, cy, cz) => {
+        this.audio.place();
+        this.spawnDust(cx * CELL, this.build.worldY(cx, cy, cz) + 0.1, cz * CELL, 0.7);
+      },
+      onErase: (cx, cy, cz) => {
+        this.audio.remove();
+        this.spawnDust(cx * CELL, this.build.worldY(cx, cy, cz) + 0.2, cz * CELL, 1.1);
+      },
     });
 
     this.atmosphere = new Atmosphere(this.engine, save?.time ?? 0.66);
@@ -137,13 +158,15 @@ export class Game {
     }
     this.nodes = all;
 
-    ui.buildTray(ITEM_LIST);
+    ui.buildBuilder(SHAPES, PAINTS, TOOLS);
+    ui.setLayer(0);
+    ui.setHistory(0, 0);
     this.ui.setLoading(1, 'Done');
 
     // restore an existing save
     if (save) {
       if (save.resources) Object.assign(this.resources, save.resources);
-      if (save.buildings?.length) this.build.restore(save.buildings);
+      if (save.pieces?.length) this.build.restore(save.pieces);
       if (save.player) {
         this.player.position.set(save.player.x, this.world.heightAt(save.player.x, save.player.z), save.player.z);
         this.player.group.position.copy(this.player.position);
@@ -221,23 +244,41 @@ export class Game {
   onKey(code, e) {
     if (!this.started) return;
     if (code === 'KeyB') this.toggleTray();
-    else if (code === 'KeyX') this.toggleRemove();
+    else if (code === 'KeyT') this.setTool(this.build.tool === 'build' ? 'erase' : 'build');
     else if (code === 'Escape') this.cancelPlacing();
-    else if (code === 'KeyR') this.rotateGhost();
+    else if (code === 'KeyR') this.rotatePiece();
     else if (code === 'KeyE' || code === 'Space') this.interactNearby();
+    else if (code === 'KeyZ') this.undo();
+    else if (code === 'KeyX') this.redo();
+    else if (code === 'KeyQ') this.changeLayer(-1);
+    else if (code === 'KeyF') this.changeLayer(1);
     else if (/^Digit[1-9]$/.test(code)) {
       const idx = Number(code.slice(5)) - 1;
-      const item = ITEM_LIST[idx];
-      if (item) { this.ui.setTrayOpen(true); this.selectItem(item.id); }
+      const shape = SHAPES[idx];
+      if (shape) {
+        this.ui.setTrayOpen(true);
+        this.building = true;
+        this.build.setTool('build');
+        this.pickShape(shape.id);
+      }
     }
     void e;
   }
 
   onPointerMove(clientX, clientY) {
-    if (!this.loaded) return;
-    if (this.build.activeItem) {
-      const p = this.pickGround(clientX, clientY);
-      if (p) this.build.updateGhost(p.x, p.z);
+    if (!this.loaded || !this.building) return;
+    const p = this.pickGround(clientX, clientY);
+    if (!p) return;
+    {
+      this.build.cursor.valid = true;
+      this.build.moveCursor(p.x, p.z);
+      // dragging lays a run of pieces, one per cell
+      if (this.input.pointer.down && this.dragCell !== `${this.build.cursor.cx},${this.build.cursor.cz}`) {
+        this.dragCell = `${this.build.cursor.cx},${this.build.cursor.cz}`;
+        if (this.build.tool !== 'erase' || this.build.blockerAt(this.build.cursor.cx, this.build.cursor.cy, this.build.cursor.cz)) {
+          this.build.commit();
+        }
+      }
     }
   }
 
@@ -247,27 +288,12 @@ export class Game {
     const p = this.pickGround(clientX, clientY);
     if (!p) return;
 
-    if (this.build.removeMode) {
-      const ok = this.build.removeAt(p.x, p.z);
-      if (ok) { this.audio.remove(); this.syncResources(); this.ui.toast('Taken apart'); }
-      else { this.audio.error(); this.ui.hint('Nothing to remove there'); }
-      return;
-    }
-
-    if (this.build.activeItem) {
-      this.build.updateGhost(p.x, p.z);
-      const placed = this.build.tryPlace();
-      if (placed) {
-        this.audio.place();
-        this.syncResources();
-        this.pulseRing(this.rings.tap, p.x, p.z, 2.0);
-      } else {
-        this.audio.error();
-        const def = ITEMS[this.build.activeItem];
-        this.ui.hint(this.build.canAfford(def)
-          ? 'That spot is too steep, wet, or already taken'
-          : `Needs ${Object.entries(def.cost).map(([k, v]) => `${v} ${k}`).join(' · ')}`);
-      }
+    if (this.building) {
+      this.build.cursor.valid = true;
+      this.build.moveCursor(p.x, p.z);
+      this.dragCell = `${this.build.cursor.cx},${this.build.cursor.cz}`;
+      const ok = this.build.commit();
+      if (ok) this.pulseRing(this.rings.tap, p.x, p.z, 1.7);
       return;
     }
 
@@ -353,66 +379,79 @@ export class Game {
     if (!this.started) return;
     const open = force !== undefined ? force : !this.ui.el.tray.classList.contains('open');
     this.ui.setTrayOpen(open);
+    this.building = open;
+    this.ui.setPlacing(open);
     if (open) {
-      this.build.deselect();
-      this.ui.setSelected(null);
-      this.ui.setPlacing(false);
-      this.build.toggleRemove(false);
-      this.ui.setRemoveVisible(false);
+      this.build.cursor.valid = true;
+      const p = this.input.pointer.inside
+        ? this.pickGround(this.input.pointer.x, this.input.pointer.y)
+        : null;
+      const gx = p ? p.x : this.player.x;
+      const gz = p ? p.z : this.player.z + 1.8;
+      this.build.moveCursor(gx, gz);
+      this.ui.hint('Pick a piece and a paint, then tap the ground. Drag to lay a run.', 3600);
+    } else {
+      this.build.cursor.valid = false;
     }
     this.audio.click();
   }
 
-  selectItem(id) {
-    const item = ITEMS[id];
-    if (!item) return;
-    if (this.build.selectedId === id) {
-      this.cancelPlacing();
-      return;
-    }
-    this.build.selectedId = id;
-    this.build.select(id);
-    this.ui.setSelected(id);
+  pickShape(id) {
+    if (!SHAPE_BY_ID[id]) return;
+    this.build.setTool('build');
+    this.build.setShape(id);
+    this.building = true;
+    this.ui.setTool('build');
+    this.ui.setShape(id);
     this.ui.setTrayOpen(false);
     this.ui.setPlacing(true);
-    this.ui.setRemoveVisible(false);
-    this.audio.click();
-    const p = this.input.pointer.inside
-      ? this.pickGround(this.input.pointer.x, this.input.pointer.y)
-      : null;
-    if (p) this.build.updateGhost(p.x, p.z);
-    else this.build.updateGhost(this.player.x, this.player.z + 1.6);
-  }
-
-  rotateGhost() {
-    if (!this.build.activeItem) return;
-    this.build.rot = (this.build.rot + Math.PI / 2) % (Math.PI * 2);
-    this.build.updateGhost(this.build.ghostPos.x, this.build.ghostPos.z);
+    this.build.cursor.valid = true;
+    const p = this.input.pointer.inside ? this.pickGround(this.input.pointer.x, this.input.pointer.y) : null;
+    if (p) this.build.moveCursor(p.x, p.z);
+    else this.build.moveCursor(this.player.x, this.player.z + 1.8);
     this.audio.click();
   }
 
-  toggleRemove() {
-    const on = !this.build.removeMode;
-    this.build.toggleRemove(on);
-    if (on) {
-      this.build.selectedId = null;
-      this.ui.setSelected(null);
-      this.ui.setPlacing(false);
-      this.ui.setRemoveVisible(true, true);
-      this.ui.hint('Tap a structure to take it apart', 2200);
-    } else {
-      this.ui.setRemoveVisible(false);
-    }
+  pickPaint(id) {
+    if (!PAINT_BY_ID[id]) return;
+    this.build.setPaint(id);
+    this.ui.setPaint(id);
     this.audio.click();
+  }
+
+  setTool(id) {
+    this.build.setTool(id);
+    this.ui.setTool(id);
+    this.audio.click();
+    if (id === 'erase') this.ui.hint('Tap a piece to take it back apart', 2200);
+    if (id === 'paint') this.ui.hint('Tap a piece to repaint it', 2200);
+  }
+
+  rotatePiece() {
+    this.build.rotate();
+    this.audio.click();
+  }
+
+  changeLayer(dir) {
+    this.build.raise(dir);
+    this.ui.setLayer(this.build.layer);
+    this.audio.click();
+  }
+
+  undo() {
+    if (this.build.undo()) { this.audio.click(); this.ui.setHistory(this.build.history.length, this.build.future.length); }
+    else this.audio.error();
+  }
+
+  redo() {
+    if (this.build.redo()) { this.audio.click(); this.ui.setHistory(this.build.history.length, this.build.future.length); }
+    else this.audio.error();
   }
 
   cancelPlacing() {
-    this.build.deselect();
-    this.build.selectedId = null;
-    this.build.toggleRemove(false);
-    this.ui.setSelected(null);
+    this.building = false;
+    this.build.cursor.valid = false;
     this.ui.setPlacing(false);
-    this.ui.setRemoveVisible(false);
     this.ui.setTrayOpen(false);
   }
 
@@ -526,7 +565,6 @@ export class Game {
     const night = this.atmosphere.night;
     this.audio.setNight(night);
     this.audio.tick(dt);
-    updateGlowMaterial(night, [1.0, 0.72, 0.36]);
 
     const move = this.input.moveVector();
     const speedMul = this.input.sprint ? 1.5 : 1;
@@ -553,7 +591,7 @@ export class Game {
       const d = Math.hypot(n.x - this.player.x, n.z - this.player.z);
       if (d < cd) { cd = d; closest = n; }
     }
-    if (closest && !this.build.activeItem && !this.build.removeMode) {
+    if (closest && !this.building) {
       const ring = this.rings.hover;
       const h = this.world.heightAt(closest.x, closest.z);
       ring.position.set(closest.x, h + 0.07, closest.z);
@@ -599,9 +637,10 @@ export class Game {
     saveGame({
       seed: this.seed,
       resources: this.resources,
-      buildings: this.build.serialize(),
+      pieces: this.build.serialize(),
       player: { x: this.player.position.x, z: this.player.position.z },
       time: this.atmosphere.t,
+      v: 3,
     });
   }
 }

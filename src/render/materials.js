@@ -17,6 +17,7 @@ export const COMMON_GLSL = /* glsl */`
 uniform float uTime;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
+uniform vec3 uViewDir;
 uniform vec3 uAmbient;
 uniform vec3 uFogColor;
 uniform float uFogNear;
@@ -41,47 +42,82 @@ float vnoise(vec2 p) {
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// four painted bands — the core of the look: hard edges, no lambert ramp
+// four painted bands — the core of the look: hard edges, no lambert ramp.
+// The references separate light and shadow almost violently: a lit turf top is
+// double the value of the same turf in shade. We keep that contrast and add a
+// cool sky rim so silhouettes never dissolve into the background.
 vec3 mossLight(vec3 albedo, vec3 n, float ao) {
   vec3 nn = normalize(n);
   float ndl = dot(nn, uSunDir) * 0.5 + 0.5;
-  float b1 = smoothstep(0.400, 0.455, ndl);
-  float b2 = smoothstep(0.575, 0.625, ndl);
-  float b3 = smoothstep(0.750, 0.800, ndl);
-  float shade = 0.12 + 0.26 * b1 + 0.18 * b2 + 0.14 * b3;
-  float aoA = mix(0.40, 1.0, ao);
-  vec3 amb = uAmbient * aoA * (0.78 + 0.22 * nn.y);
-  vec3 sun = uSunColor * shade * mix(0.34, 1.0, ao);
+  float b1 = smoothstep(0.395, 0.445, ndl);
+  float b2 = smoothstep(0.560, 0.610, ndl);
+  float b3 = smoothstep(0.735, 0.790, ndl);
+  float shade = 0.055 + 0.26 * b1 + 0.22 * b2 + 0.20 * b3;
+  float aoA = mix(0.34, 1.0, ao);
+  vec3 amb = uAmbient * aoA * (0.74 + 0.26 * nn.y);
+  vec3 sun = uSunColor * shade * mix(0.26, 1.0, ao);
   vec3 col = albedo * (amb + sun);
+  // camera fill: the fixed camera looks down from the south, so anything
+  // facing it gets a soft bounce. Without this every wall facing the player is
+  // a black slab — the references never let that happen.
+  float fill = clamp(dot(nn, -uViewDir) * 0.5 + 0.5, 0.0, 1.0);
+  // only *walls* catch the bounce — flat ground keeps its painted shade pools
+  float wall = 1.0 - 0.78 * clamp(nn.y, 0.0, 1.0);
+  col += albedo * uAmbient * 0.55 * fill * fill * wall;
+  // sky rim: upward faces catch a pale, slightly blue wash like the paintings
+  float rim = smoothstep(0.35, 1.0, nn.y) * (0.55 + 0.45 * b2);
+  col += albedo * vec3(0.035, 0.052, 0.065) * rim;
   // cool bounce into the shadow band, warm kiss on the top band
-  col += vec3(0.010, 0.022, 0.034) * (1.0 - b1) * aoA;
-  col += vec3(0.030, 0.024, 0.010) * b3 * max(0.0, nn.y);
+  col += vec3(0.010, 0.022, 0.036) * (1.0 - b1) * aoA;
+  col += vec3(0.040, 0.032, 0.014) * b3 * max(0.0, nn.y);
   // painted saturation — the reference art is richer than a physical model
   float l = dot(col, vec3(0.299, 0.587, 0.114));
-  col = mix(vec3(l), col, 1.10);
+  col = mix(vec3(l), col, 1.12);
   return max(col, vec3(0.0));
 }
 
-// grass blades painted on the ground: thin strokes that always read from the
-// fixed camera, plus tiny square dabs of paint where a patch breaks up
-vec3 groundDetail(vec2 p, float fade, float greenish) {
-  vec2 dir = vec2(-0.30, 0.954);        // strokes run away toward the horizon
+// Painted ground texture. Four layers, all in world space and all faded with
+// distance so the near ground is shaggy and the far ground stays clean:
+//   · clumps — soft dark tufts, the "bunched grass" of the paintings
+//   · hatching — dark strokes down the fall line of the slope
+//   · blades — bright short strokes on grass only
+//   · dabs — small dark flecks where a patch breaks up
+vec3 groundDetail(vec2 p, vec2 slopeDir, float fade, float greenish) {
+  vec2 dir = vec2(-0.30, 0.954);
   float across = dot(p, vec2(-dir.y, dir.x));
   float along = dot(p, dir);
-  // two overlapping stroke fields at different scales, so nothing reads as a grid
-  float c1x = floor(across * 5.3), c1z = floor(along * 3.1);
-  float h1 = hash12(vec2(c1x, c1z));
-  float w1 = sin(along * 6.0 + h1 * 6.2831) * 0.3;
-  float s1 = step(0.68, h1) * smoothstep(0.55, 0.08, abs(fract(across * 5.3) - 0.5 + w1 * 0.22));
-  float c2x = floor(across * 11.0 + 3.0), c2z = floor(along * 6.4 + 7.0);
-  float h2 = hash12(vec2(c2x, c2z));
-  float w2 = sin(along * 14.0 + h2 * 6.2831) * 0.4;
-  float s2 = step(0.82, h2) * smoothstep(0.5, 0.1, abs(fract(across * 11.0 + 3.0) - 0.5 + w2 * 0.2));
-  // small dark dabs where a patch breaks up
+
+  // clumps: low frequency, thresholded so they read as shapes not haze
+  float clumpN = vnoise(p * 0.62 + 4.0) * 0.6 + vnoise(p * 1.45 - 2.0) * 0.4;
+  float clump = smoothstep(0.52, 0.86, clumpN) * greenish;
+
+  // dark hatching, aligned to the fall line of the slope
+  vec2 sdir = slopeDir;
+  float sa = dot(p, vec2(-sdir.y, sdir.x)) * 6.2;
+  float sl = dot(p, sdir) * 2.4;
+  float cellA = floor(sa);
+  float cellL = floor(sl * 1.7);
+  float hh = hash12(vec2(cellA, cellL));
+  float wob = sin(sl * 7.0 + hh * 6.2831) * 0.34;
+  float stroke = step(0.58, hh) * smoothstep(0.52, 0.06, abs(fract(sa) - 0.5 + wob * 0.2));
+  stroke += step(0.76, hash12(vec2(cellA + 4.0, cellL * 1.3))) *
+            smoothstep(0.45, 0.05, abs(fract(sa * 2.1 + 0.3) - 0.5)) * 0.7;
+
+  // bright blade strokes: short, dense, only where the ground is grassy
+  float bx = floor(across * 22.0);
+  float bz = floor(along * 12.0);
+  float bh = hash12(vec2(bx, bz));
+  float blade = step(0.48, bh) *
+    smoothstep(0.5, 0.02, abs(fract(across * 22.0 + bh * 0.6) - 0.5 + sin(along * 26.0 + bh * 5.0) * 0.30));
+
   float gx = floor(p.x * 5.0), gz = floor(p.y * 5.0);
-  float dab = step(0.90, hash12(vec2(gx, gz))) * (0.4 + 0.6 * hash12(vec2(gx + 7.0, gz)));
-  float stroke = clamp(s1 + s2 * 0.7, 0.0, 1.0) * greenish;
-  return (vec3(0.040, 0.058, 0.020) * stroke - vec3(0.048, 0.042, 0.024) * dab) * fade;
+  float dab = step(0.86, hash12(vec2(gx, gz))) * (0.4 + 0.6 * hash12(vec2(gx + 7.0, gz)));
+
+  vec3 dark = vec3(-0.060, -0.046, -0.034) * clamp(stroke, 0.0, 1.0) * (1.0 - greenish * 0.40);
+  vec3 tuft = vec3(-0.055, -0.020, -0.030) * clump;
+  vec3 light = vec3(0.080, 0.098, 0.030) * clamp(blade, 0.0, 1.0) * greenish;
+  vec3 dabs = vec3(-0.055, -0.048, -0.028) * dab * (1.0 - greenish * 0.5);
+  return (dark + tuft + light + dabs) * fade;
 }
 
 // unified painterly grade: gentle desaturation + warm bias ties every asset
@@ -105,6 +141,7 @@ function commonUniforms() {
     uTime: shared.uTime,
     uSunDir: shared.uSunDir,
     uSunColor: shared.uSunColor,
+    uViewDir: shared.uViewDir,
     uAmbient: shared.uAmbient,
     uFogColor: shared.uFogColor,
     uFogNear: shared.uFogNear,
@@ -147,21 +184,50 @@ export function createTerrainMaterial() {
       varying float vDist;
       varying vec3 vWorld;
       varying vec3 vNormalW;
+
       void main() {
-        // painterly break-up so broad colour fields never look like a gradient
-        float g1 = vnoise(vWorld.xz * 1.9);
-        float g2 = vnoise(vWorld.xz * 0.42 + 11.0);
-        float g3 = vnoise(vWorld.xz * 7.0);
-        vec3 albedo = vColor * (0.945 + g1 * 0.07 + g2 * 0.06 + g3 * 0.025);
-        // broad dappled shade, the deep green pools in the reference paintings
-        float shadeN = vnoise(vWorld.xz * 0.055 + 3.7) * 0.62 + vnoise(vWorld.xz * 0.13 - 8.0) * 0.38;
-        albedo *= mix(0.72, 1.10, smoothstep(0.28, 0.72, shadeN));
-        // distance-faded painted texture so the ground never reads as a wash
-        float fade = smoothstep(88.0, 26.0, vDist);
-        // grass strokes only on grass: bare earth keeps its smooth painted wash
-        float greenish = smoothstep(0.005, 0.075, albedo.g - albedo.r);
-        albedo += groundDetail(vWorld.xz, fade, greenish);
         vec3 n = normalize(vNormalW);
+        float slope = 1.0 - n.y;
+        float fade = smoothstep(96.0, 22.0, vDist);
+        vec2 p = vWorld.xz;
+
+        // --- broad washes -------------------------------------------------
+        // Three octaves of very low frequency noise, each pulling the vertex
+        // colour toward a sunlit or shaded neighbour. This is what stops the
+        // ground reading as one flat fill: it gives the big soft pools of the
+        // reference paintings.
+        float w1 = vnoise(p * 0.085 + 3.7);
+        float w2 = vnoise(p * 0.26 - 8.0);
+        float w3 = vnoise(p * 0.72 + 21.0);
+        vec3 albedo = vColor;
+        float pool = smoothstep(0.34, 0.82, w1 * 0.7 + w3 * 0.3);
+        albedo *= mix(0.94, 1.07, pool);
+        albedo *= mix(1.06, 0.78, smoothstep(0.50, 0.90, w2));
+        albedo *= 0.975 + w3 * 0.05;
+        // pools are not just darker, they are a different green: sun-dried
+        // yellow-green in the open, blue-green in the shade
+        albedo = mix(albedo, albedo * vec3(1.06, 1.02, 0.86), pool * 0.55);
+        albedo = mix(albedo, albedo * vec3(0.90, 0.99, 1.10), smoothstep(0.45, 0.9, w2) * 0.45);
+
+        // --- deep shade pools under the canopy ----------------------------
+        float shadeN = vnoise(p * 0.055 + 3.7) * 0.62 + vnoise(p * 0.13 - 8.0) * 0.38;
+        albedo *= mix(0.58, 1.06, smoothstep(0.26, 0.66, shadeN));
+
+        // --- stroked texture ----------------------------------------------
+        float greenish = smoothstep(0.005, 0.075, albedo.g - albedo.r);
+        // fall line of the slope: strokes follow it, like a brush pushed downhill
+        vec2 slopeDir = normalize(vec2(n.x, n.z) + vec2(0.001, 0.001));
+        albedo += groundDetail(p, slopeDir, fade, greenish);
+
+        // --- slopes: bare earth and rock get a darker, cooler wash ---------
+        float steep = smoothstep(0.16, 0.55, slope);
+        albedo *= mix(1.0, 0.74, steep);
+        albedo = mix(albedo, albedo * vec3(0.86, 0.88, 0.96), steep * 0.5);
+
+        // --- the painting's paper tooth -----------------------------------
+        float tooth = vnoise(p * 9.0) * 0.6 + vnoise(p * 3.1) * 0.4;
+        albedo *= 0.975 + tooth * 0.05;
+
         vec3 col = mossLight(albedo, n, vAO);
         col = applyFog(col, vDist);
         gl_FragColor = vec4(col, 1.0);

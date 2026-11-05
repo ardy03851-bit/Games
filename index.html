@@ -55,11 +55,23 @@
 
   <div id="build-tray" class="build-tray hidden">
     <div class="tray-head">
-      <h2>Build</h2>
-      <p id="tray-hint">Tap an object, then tap the ground to place it.</p>
+      <h2>Build anything</h2>
+      <p id="tray-hint">Pick a piece and a paint, then tap the ground. Drag to lay a run.</p>
       <button class="tray-close" id="btn-tray-close" aria-label="Close build menu">×</button>
     </div>
+    <div class="tray-tools" id="tool-row"></div>
+    <div class="tray-paints" id="paint-row"></div>
     <div class="tray-items" id="build-items"></div>
+    <div class="tray-foot">
+      <div class="layer-ctl">
+        <button class="step-btn" id="btn-layer-down" aria-label="Layer down">–</button>
+        <span id="layer-label">Layer 1</span>
+        <button class="step-btn" id="btn-layer-up" aria-label="Layer up">+</button>
+      </div>
+      <button class="foot-btn" id="btn-rotate-2" aria-label="Rotate">↻</button>
+      <button class="foot-btn" id="btn-undo" aria-label="Undo">↶</button>
+      <button class="foot-btn" id="btn-redo" aria-label="Redo">↷</button>
+    </div>
   </div>
 
   <div class="bottom-bar">
@@ -134,8 +146,8 @@
         <p>Tap a tree, boulder, bush or fallen log. The cube walks over if it is close enough. Trees and bushes rest for a moment after a harvest.</p>
       </div>
       <div>
-        <h3>Build</h3>
-        <p>Tap <b>Build</b>, pick something, then tap the ground. Green ghost = it fits. <b>↻</b> rotates, <b>✕</b> removes and refunds part of the cost.</p>
+        <h3>Build anything</h3>
+        <p>Tap <b>Build</b> to open the workshop. Choose a <b>piece</b> (block, wall, arch, ramp, roof, fence, lantern…), choose a <b>paint</b>, then tap the ground — drag to lay a run of them. <b>+ / –</b> stacks pieces into layers, <b>↻</b> turns them, <b>Erase</b> takes a piece back (and refunds it), <b>Repaint</b> recolours what is already there, and <b>↶ ↷</b> undo and redo.</p>
         <h3>Time</h3>
         <p>The valley drifts from noon to dusk to night — lanterns and windows light up on their own. Your progress saves in this browser.</p>
       </div>

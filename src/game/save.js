@@ -2,12 +2,12 @@
  * Saves are tiny: the world is regenerated from an integer seed, so only the
  * player's changes have to be stored.
  */
-const KEY = 'mosswood.save.v2';
+const KEY = 'mosswood.save.v3';
 const SETTINGS_KEY = 'mosswood.settings.v1';
 
 export function saveGame(data) {
   try {
-    localStorage.setItem(KEY, JSON.stringify({ ...data, v: 2, at: Date.now() }));
+    localStorage.setItem(KEY, JSON.stringify({ ...data, v: 3, at: Date.now() }));
     return true;
   } catch (e) {
     return false;
@@ -19,7 +19,7 @@ export function loadGame() {
     const raw = localStorage.getItem(KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.v !== 2) return null;
+    if (!data || data.v !== 3) return null;
     return data;
   } catch (e) {
     return null;

@@ -30,6 +30,42 @@ Everything animates: every grass blade, frond, bush and tree sways on its own
 wind phase in the vertex shader — a slow gust plus a faster flutter, so the
 whole valley breathes instead of moving in lockstep.
 
+### The repaint pass
+
+Raw WebGL output is crisp, evenly lit and faceted — none of which is in the
+reference paintings. So the frame is not finished when the scene is drawn:
+`src/render/postfx.js` renders the world into a texture and then repaints it.
+
+1. **bright pass** — a quarter-res copy of everything that glows
+2. **two blurs** — gives lanterns, waterfalls and fireflies a painted halo
+3. **composite** — a five-tap *brush-direction smear* that is edge-aware (it
+   softens polygon facets but never smears a silhouette), soft posterisation
+   into a few flat washes, canvas tooth and dried-brush flecks, a warm/cool
+   split-tone grade, an S-curve and a vignette
+
+If the repaint ever fails to compile, the engine notices that the frame came
+back black and permanently falls back to a direct render, so a shader bug can
+never turn into a black screen on an iPad.
+
+## Building anything
+
+There is no catalogue of finished buildings. `src/render/parts.js` defines
+fourteen **pieces** — block, slab, floor, wall, pillar, arch, window, ramp,
+stairs, roof, fence, lantern, planter, banner — and ten **paints** (oak, pine,
+old wood, stone, slate, brick, clay, thatch, moss, glass). Every combination is
+generated as geometry at runtime, with light and shadow baked into its tones.
+
+The player places them on a 1×1 grid, layer by layer (`+ / –`), turning them
+with `↻`. **Build** places, **Erase** takes a piece back and refunds it,
+**Repaint** recolours what is already standing, `↶ ↷` undo and redo. Dragging
+lays a whole run of pieces. Because pieces are instanced per (shape, paint)
+pair, a thousand-piece castle is still a dozen draw calls.
+
+```
+src/game/build.js     grid, tools, undo, collisions, save format
+src/render/parts.js   the piece catalogue + paints
+```
+
 ## The valley
 
 `src/terrain/terrain.js` builds the world in layers so it looks hand-made
@@ -110,6 +146,7 @@ src/game/             player, building, audio, save, game loop
 src/ui/               HUD, build tray, thumb-stick
 src/vendor/           three.js (MIT) + BufferGeometryUtils
 assets/art/           key art + icon
+tools/                headless smoke test + software preview renderer
 ```
 
 ## Running locally
