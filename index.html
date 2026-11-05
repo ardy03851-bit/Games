@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="theme-color" content="#2c3a2a" />
+<meta name="description" content="Mosswood — a cozy 2.5D forest where you wander, gather and build a little home." />
+<title>Mosswood — a cozy forest to build in</title>
+<link rel="icon" href="assets/art/icon.png" />
+<link rel="stylesheet" href="styles/game.css" />
+</head>
+<body>
+<canvas id="game" aria-label="Mosswood game view"></canvas>
+
+<div id="grade" aria-hidden="true">
+  <div class="vignette"></div>
+  <div class="grain"></div>
+  <div class="warm"></div>
+</div>
+
+<!-- ============================ HUD ============================ -->
+<div id="hud" class="hidden">
+  <header class="hud-top">
+    <div class="resources" id="resources">
+      <div class="pill" data-res="wood" title="Wood">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 8.5c0-2 1.8-3.5 4-3.5h7c2.2 0 4 1.5 4 3.5v7c0 2-1.8 3.5-4 3.5H9c-2.2 0-4-1.5-4-3.5z" fill="#7c5a34"/><ellipse cx="8.6" cy="12" rx="2.5" ry="4.4" fill="#c8a271"/><ellipse cx="8.6" cy="12" rx="1.2" ry="2.4" fill="#8b6238"/></svg>
+        <span id="res-wood">0</span>
+      </div>
+      <div class="pill" data-res="stone" title="Stone">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15.5 6.4 9l5-3 4.8 2.2L20 14l-3 5H7.6z" fill="#4d5568"/><path d="M6.4 9 11.4 6l4.8 2.2-2 3.4z" fill="#79839a"/></svg>
+        <span id="res-stone">0</span>
+      </div>
+      <div class="pill" data-res="fiber" title="Fiber">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21c-4-2.5-6-6-6-9.5C6 7 8.5 4.5 12 3c3.5 1.5 6 4 6 8.5 0 3.5-2 7-6 9.5z" fill="#6f8f4e"/><path d="M12 20V5" stroke="#4a6b41" stroke-width="1.3" fill="none"/><path d="M12 12l3.4-2.4M12 15.5 8.7 13" stroke="#4a6b41" stroke-width="1.1" fill="none"/></svg>
+        <span id="res-fiber">0</span>
+      </div>
+    </div>
+    <div class="hud-actions">
+      <div class="pill day" id="day-pill" title="Time of day">
+        <span class="sun-icon" id="day-icon"></span>
+        <span id="day-label">Golden hour</span>
+      </div>
+      <button class="icon-btn" id="btn-sound" title="Sound" aria-label="Toggle sound">
+        <svg viewBox="0 0 24 24"><path d="M4 9.5h3.2L12 5.5v13L7.2 14.5H4z" fill="currentColor"/><path id="sound-waves" d="M15.5 9a4.2 4.2 0 0 1 0 6M18 6.6a7.4 7.4 0 0 1 0 10.8" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-help" title="How to play" aria-label="How to play">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.4" stroke="currentColor" stroke-width="1.7" fill="none"/><path d="M9.6 9.3c0-1.4 1.1-2.4 2.5-2.4s2.4.9 2.4 2.2c0 2-2.6 2-2.6 4" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round"/><circle cx="11.9" cy="16.4" r="1.05" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div id="hint" class="hint hidden"></div>
+
+  <div id="build-tray" class="build-tray hidden">
+    <div class="tray-head">
+      <h2>Build</h2>
+      <p id="tray-hint">Tap an object, then tap the ground to place it.</p>
+      <button class="tray-close" id="btn-tray-close" aria-label="Close build menu">×</button>
+    </div>
+    <div class="tray-items" id="build-items"></div>
+  </div>
+
+  <div class="bottom-bar">
+    <div class="stick-zone" id="stick-zone" aria-hidden="true">
+      <div class="stick-base" id="stick-base">
+        <div class="stick-knob" id="stick-knob"></div>
+      </div>
+    </div>
+    <div class="bottom-center">
+      <button class="big-btn" id="btn-build">
+        <svg viewBox="0 0 24 24"><path d="M3.5 11.4 12 4l8.5 7.4" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10.6V20h12v-9.4" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linejoin="round"/><path d="M10 20v-4.6h4V20" stroke="currentColor" stroke-width="1.7" fill="none"/></svg>
+        <span>Build</span>
+      </button>
+    </div>
+    <div class="right-actions">
+      <button class="round-btn hidden" id="btn-rotate" title="Rotate">
+        <svg viewBox="0 0 24 24"><path d="M19 12a7 7 0 1 1-2.2-5.1" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round"/><path d="M19.4 4.6v4.2h-4.2" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="round-btn hidden" id="btn-remove" title="Remove">
+        <svg viewBox="0 0 24 24"><path d="M5 6.5h14M9.5 6.5V4.8h5v1.7M7.2 6.5 8 19.4h8l.8-12.9" stroke="currentColor" stroke-width="1.7" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="round-btn hidden" id="btn-cancel" title="Cancel">
+        <svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="currentColor" stroke-width="1.9" fill="none" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts"></div>
+  <div id="floaters" class="floaters"></div>
+</div>
+
+<!-- ========================== LOADING ========================== -->
+<div id="loading" class="screen">
+  <div class="screen-art"></div>
+  <div class="screen-inner">
+    <div class="logo-small">Mosswood</div>
+    <div class="loader-track"><div class="loader-fill" id="loader-fill"></div></div>
+    <div class="loading-text" id="loading-text">Walking into the valley…</div>
+  </div>
+</div>
+
+<!-- =========================== TITLE =========================== -->
+<div id="title" class="screen hidden">
+  <div class="screen-art title-art"></div>
+  <div class="screen-inner title-inner">
+    <div class="title-block">
+      <h1 class="logo">Mosswood</h1>
+      <p class="tagline">a cozy forest to wander, gather and build in</p>
+      <div class="title-buttons">
+        <button class="btn primary" id="btn-play">Begin</button>
+        <button class="btn hidden" id="btn-continue">Continue</button>
+      </div>
+      <div class="title-meta">
+        <button class="link" id="btn-quality">Quality: auto</button>
+        <span class="dot">·</span>
+        <button class="link" id="btn-reset">New valley</button>
+      </div>
+      <p class="fineprint">WASD / arrows to walk · tap the world to gather · a fixed, hand-painted view</p>
+    </div>
+  </div>
+</div>
+
+<!-- ============================ HELP =========================== -->
+<div id="help" class="modal hidden">
+  <div class="modal-card">
+    <h2>How to play</h2>
+    <div class="help-grid">
+      <div>
+        <h3>Wander</h3>
+        <p><b>iPad:</b> push the thumb-stick, or tap the ground to walk there.<br><b>Desktop:</b> WASD / arrow keys.</p>
+        <h3>Gather</h3>
+        <p>Tap a tree, boulder, bush or fallen log. The cube walks over if it is close enough. Trees and bushes rest for a moment after a harvest.</p>
+      </div>
+      <div>
+        <h3>Build</h3>
+        <p>Tap <b>Build</b>, pick something, then tap the ground. Green ghost = it fits. <b>↻</b> rotates, <b>✕</b> removes and refunds part of the cost.</p>
+        <h3>Time</h3>
+        <p>The valley drifts from noon to dusk to night — lanterns and windows light up on their own. Your progress saves in this browser.</p>
+      </div>
+    </div>
+    <button class="btn primary" id="btn-help-close">Back to the woods</button>
+  </div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./src/vendor/three.module.js"
+  }
+}
+</script>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
