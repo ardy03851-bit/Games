@@ -14,10 +14,12 @@ import { createInstancedSolidMaterial, createLeafCardMaterial } from './material
 import { leafTexture } from './textures.js';
 import {
   rockGeometry, rockCapGeometry, trunkGeometry, logGeometry, stumpGeometry,
+  pineCoreGeometry,
 } from './propsGeo.js';
 import {
   grassTuftGeometry, fernGeometry, bushGeometry, canopyGeometry,
   pineGeometry, mushroomGeometry, leafCardSet, flowerGeometry, FLOWER_KINDS,
+  reedGeometry,
 } from './plants.js';
 
 const P = PALETTE;
@@ -120,6 +122,22 @@ export class Vegetation {
       );
     }
 
+    // ---------------------------------------------------------------- reeds
+    // A wet fringe along every waterline: the cue that sells the river.
+    const reedGeos = [reedGeometry(4, true), reedGeometry(11, false)];
+    const reedBatches = reedGeos.map((g, i) => new SolidBatch(g, leafMat, `reeds${i}`));
+    for (const r of props.reeds || []) {
+      e.set(0, r.rot, 0);
+      q.setFromEuler(e);
+      const sc = r.scale;
+      reedBatches[r.variant % 2].add(
+        new THREE.Vector3(r.x, r.y, r.z),
+        new THREE.Vector3(sc, sc * rnd(0.9, 1.25), sc),
+        q.clone(),
+        [rnd(0, TWO_PI), 0.05 + r.scale * 0.03],
+      );
+    }
+
     // ------------------------------------------------------------ mushrooms
     const mushroomBatch = new SolidBatch(mushroomGeometry(), solidMat, 'mushrooms');
     let shroomBudget = 320;
@@ -194,7 +212,7 @@ export class Vegetation {
     const bushBatches = bushGeos.map((g, i) => new SolidBatch(g, solidMat, `bushes${i}`));
     // painted leaf cards wrap the solid core of every bush
     const bushCardMat = createLeafCardMaterial({
-      texture: leafTexture('bush'), brightness: 1.02, alphaTest: 0.38,
+      texture: leafTexture('bush'), brightness: 1.26, alphaTest: 0.38,
     });
     const bushCards = new SolidBatch(
       leafCardSet({ count: 6, radius: 0.92, seed: 21, size: 0.62 }), bushCardMat, 'bushcards',
@@ -219,16 +237,22 @@ export class Vegetation {
 
     // ---------------------------------------------------------------- trees
     const trunkBatch = new SolidBatch(trunkGeometry(), solidMat, 'trunks');
+    const trunkBirchBatch = new SolidBatch(trunkGeometry({ pale: true, taper: 0.42 }), solidMat, 'trunksBirch');
+    const pineCoreBatch = new SolidBatch(pineCoreGeometry(4), solidMat, 'pineCores');
     const canopyGeos = [canopyGeometry(11), canopyGeometry(23), canopyGeometry(31)];
     const canopyBatches = canopyGeos.map((g, i) => new SolidBatch(g, solidMat, `canopy${i}`));
     // two card sets, two painted leaf textures, layered over every crown
+    // Cards sit over lobes whose vertex paint is already sun-baked, so they
+    // need a brightness lift to read as the same foliage, not dark stamps.
     const cardMats = [
-      createLeafCardMaterial({ texture: leafTexture('canopyA'), brightness: 1.0, alphaTest: 0.40 }),
-      createLeafCardMaterial({ texture: leafTexture('canopyB'), brightness: 1.06, alphaTest: 0.40 }),
+      createLeafCardMaterial({ texture: leafTexture('canopyA'), brightness: 1.30, alphaTest: 0.35 }),
+      createLeafCardMaterial({ texture: leafTexture('canopyB'), brightness: 1.34, alphaTest: 0.35 }),
+      createLeafCardMaterial({ texture: leafTexture('birch'), brightness: 1.34, alphaTest: 0.35 }),
     ];
     const canopyCards = [
-      new SolidBatch(leafCardSet({ count: 8, radius: 1.0, seed: 4, size: 0.60 }), cardMats[0], 'canopyCardsA'),
-      new SolidBatch(leafCardSet({ count: 7, radius: 0.95, seed: 15, size: 0.54 }), cardMats[1], 'canopyCardsB'),
+      new SolidBatch(leafCardSet({ count: 14, radius: 1.02, seed: 4, size: 0.46 }), cardMats[0], 'canopyCardsA'),
+      new SolidBatch(leafCardSet({ count: 12, radius: 0.97, seed: 15, size: 0.42 }), cardMats[1], 'canopyCardsB'),
+      new SolidBatch(leafCardSet({ count: 14, radius: 0.95, seed: 52, size: 0.40 }), cardMats[2], 'canopyCardsBirch'),
     ];
     const pineGeos = [
       pineGeometry({ layers: 7, seed: 5 }),
@@ -237,15 +261,40 @@ export class Vegetation {
     const pineBatches = pineGeos.map((g, i) => new SolidBatch(g, solidMat, `pines${i}`));
     // pines get their own cards: a needle mass that breaks the cone silhouette
     const pineCardMat = createLeafCardMaterial({
-      texture: leafTexture('canopyC'), brightness: 0.98, alphaTest: 0.40,
+      texture: leafTexture('canopyC'), brightness: 1.26, alphaTest: 0.35,
     });
     const pineCards = new SolidBatch(
-      leafCardSet({ count: 7, radius: 0.95, seed: 31, size: 0.52 }), pineCardMat, 'pineCards',
+      leafCardSet({ count: 10, radius: 0.95, seed: 31, size: 0.44 }), pineCardMat, 'pineCards',
     );
 
     for (const t of props.trees) {
       const s = t.scale;
-      if (t.type === 'broad') {
+      if (t.type === 'birch') {
+        const trunkH = (2.2 + t.hue * 1.2) * s;
+        const girth = (0.24 + t.girth * 0.08) * s;
+        e.set(0, t.rot, 0);
+        q.setFromEuler(e);
+        trunkBirchBatch.add(
+          new THREE.Vector3(t.x, t.y - 0.2, t.z),
+          new THREE.Vector3(girth, trunkH + 0.2, girth), q.clone(), [t.swayPhase, 0.005],
+        );
+        const canopyY = t.y + trunkH * 0.80;
+        const canopyR = (1.35 + t.hue * 0.55) * s;
+        canopyBatches[1 + ((t.hue * 2) | 0) % 2].add(
+          new THREE.Vector3(t.x, canopyY, t.z),
+          new THREE.Vector3(canopyR * 0.95, canopyR * 1.12, canopyR * 0.95),
+          q.clone(), [t.swayPhase, 0.009],
+        );
+        canopyCards[2].add(
+          new THREE.Vector3(t.x, canopyY, t.z),
+          new THREE.Vector3(canopyR * 1.0, canopyR * 1.16, canopyR * 1.0),
+          q.clone(), [t.swayPhase, 0.0],
+        );
+        this.nodes.trees.push({
+          x: t.x, y: t.y, z: t.z, r: 0.6 * s, id: t.id, kind: 'tree', trunkH,
+        });
+        shadowItems.push({ x: t.x + 0.4 * s, z: t.z + 0.55 * s, y: t.y, r: canopyR * 1.0, a: 0.36 });
+      } else if (t.type === 'broad') {
         const trunkH = (1.5 + t.hue * 0.9) * s;
         const girth = (0.34 + t.girth * 0.14) * s;
         e.set(0, t.rot, 0);
@@ -280,6 +329,11 @@ export class Vegetation {
           new THREE.Vector3(girth, trunkH + 0.2, girth), q.clone(), [t.swayPhase, 0.003],
         );
         const radius = (2.15 + t.hue * 0.6) * s;
+        pineCoreBatch.add(
+          new THREE.Vector3(t.x, t.y - 0.05, t.z),
+          new THREE.Vector3(radius * 0.72, trunkH * 1.06, radius * 0.72),
+          q.clone(), [t.swayPhase, 0.004],
+        );
         pineBatches[(t.hue * 2) | 0].add(
           new THREE.Vector3(t.x, t.y - 0.05, t.z),
           new THREE.Vector3(radius, trunkH * 1.12, radius),
@@ -347,15 +401,16 @@ export class Vegetation {
     // ---------------------------------------------------------------- build
     this.batches = {
       tuftBatches, fernBatches, bushBatches, canopyBatches, pineBatches,
-      trunkBatch, capBatch, logBatch, stumpBatch, rockBatches, mushroomBatch,
-      bushCards, canopyCards, pineCards, pebbleBatch, flowerBatches,
+      trunkBatch, trunkBirchBatch, pineCoreBatch, capBatch, logBatch, stumpBatch,
+      rockBatches, mushroomBatch, bushCards, canopyCards, pineCards, pebbleBatch,
+      flowerBatches, reedBatches,
     };
     this.flowerBatches = flowerBatches;
     for (const b of [
       ...tuftBatches, ...fernBatches, ...bushBatches, ...canopyBatches, ...pineBatches,
-      trunkBatch, ...rockBatches, capBatch, logBatch, stumpBatch, mushroomBatch,
-      pebbleBatch, pineCards, ...flowerBatches,
-      bushCards, ...canopyCards,
+      trunkBatch, trunkBirchBatch, pineCoreBatch, ...rockBatches, capBatch, logBatch,
+      stumpBatch, mushroomBatch, pebbleBatch, pineCards, ...flowerBatches,
+      bushCards, ...canopyCards, ...reedBatches,
     ]) {
       this.meshes.push(b.build(this.scene));
     }
@@ -412,10 +467,14 @@ class ShadowDecals {
     const q = new THREE.Quaternion();
     for (let i = 0; i < count; i++) {
       const it = items[i];
-      const h = Math.max(
+      let h = Math.max(
         world.heightAt(it.x, it.z),
         world.heightAt(it.x + it.r * 0.5, it.z + it.r * 0.5) - 0.25,
       );
+      // never let a contact shadow float on the river: sink it under the
+      // surface wherever the disc would land in the channel
+      const rm = world.fieldAt ? world.fieldAt(world.riverMask, it.x, it.z) : 0;
+      if (rm > 0.18) h -= 1.6;
       m.compose(
         new THREE.Vector3(it.x, h + 0.08, it.z),
         q,

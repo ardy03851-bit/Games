@@ -124,18 +124,49 @@ export function rockCapGeometry(seed = 1) {
   return flat;
 }
 
-/** Tapered trunk with bark colour and a hint of moss on the north side. */
-export function trunkGeometry({ taper = 0.62, moss = 0.4 } = {}) {
-  const geo = new THREE.CylinderGeometry(0.5 * taper, 0.5, 1, 7, 3, false);
-  geo.translate(0, 0.5, 0);
-  const flat = geo.index ? geo.toNonIndexed() : geo;
-  flat.computeVertexNormals();
-  return paint(flat, (p, n) => {
-    const up = Math.max(0, p.y);
-    let c = mix(P.barkDark, P.bark, Math.min(1, up * 2.2 + 0.35));
-    const side = hash(Math.round(p.x * 30), Math.round(p.z * 30), 7);
-    c = mix(c, P.wood, side * 0.35);
-    if (n.x < -0.2) c = mix(c, P.grassShade, moss * 0.55);
+/**
+ * A trunk with a root flare and three branch stubs reaching into the crown —
+ * the silhouette cue that turns a green blob on a stick into a tree. Bark is
+ * painted in vertical striations; `pale` gives a birch-white trunk with dark
+ * dashes. Moss creeps up the north side and wraps the foot.
+ */
+export function trunkGeometry({ taper = 0.55, moss = 0.4, pale = false } = {}) {
+  const parts = [];
+  const main = new THREE.CylinderGeometry(0.5 * taper, 0.66, 1, 9, 4, false);
+  main.translate(0, 0.5, 0);
+  parts.push(main.index ? main.toNonIndexed() : main);
+  for (let i = 0; i < 3; i++) {
+    const a = i * 2.09 + 0.6;
+    const g = new THREE.CylinderGeometry(0.09, 0.17, 0.55, 5, 1, false);
+    g.translate(0, 0.275, 0);
+    g.rotateZ(0.95);
+    g.rotateY(a);
+    g.translate(Math.cos(a) * 0.16, 0.60 + i * 0.11, Math.sin(a) * 0.16);
+    parts.push(g.index ? g.toNonIndexed() : g);
+  }
+  const merged = mergeSimple(parts);
+  merged.computeVertexNormals();
+  const barkLo = pale ? [0.62, 0.58, 0.50] : P.barkDark;
+  const barkHi = pale ? [0.86, 0.83, 0.74] : P.bark;
+  const dash = pale ? [0.24, 0.21, 0.17] : P.barkDark;
+  return paint(merged, (p, n) => {
+    const up = clamp01(p.y);
+    let c = mix(barkLo, barkHi, Math.min(1, up * 1.8 + 0.30));
+    // vertical striations: bark is never one flat tone
+    const ang = Math.atan2(p.z, p.x);
+    const stri = hash(Math.round(ang * 15), Math.round(p.y * 26), 3);
+    c = mix(c, dash, stri * (pale ? 0.28 : 0.38));
+    if (pale) {
+      // birch dashes: short dark ticks, denser low down
+      const tick = hash(Math.round(ang * 8), Math.round(p.y * 11), 8);
+      c = mix(c, dash, Math.pow(tick, 6) * (0.9 - up * 0.4));
+    } else {
+      const side = hash(Math.round(p.x * 30), Math.round(p.z * 30), 7);
+      c = mix(c, P.wood, side * 0.30);
+      if (n.x < -0.2) c = mix(c, P.grassShade, moss * 0.55);
+    }
+    // mossy foot
+    c = mix(c, P.grassDeep, clamp01((0.16 - up) / 0.16) * 0.5);
     return c;
   });
 }

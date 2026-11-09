@@ -173,6 +173,51 @@ export class Mist {
 }
 
 /** CPU particle pool for dust, chips, smoke and leaves. */
+/**
+ * Warm light pools under placed lanterns at night — the buildings giving
+ * something back to the valley. Additive soft discs on the ground.
+ */
+export class LanternGlow {
+  constructor(scene, max = 96) {
+    this.max = max;
+    const tex = softDotTexture();
+    this.material = new THREE.MeshBasicMaterial({
+      map: tex,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      color: new THREE.Color(1.0, 0.66, 0.30),
+      opacity: 0,
+    });
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2);
+    this.mesh = new THREE.InstancedMesh(geo, this.material, max);
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 4;
+    this.mesh.count = 0;
+    scene.add(this.mesh);
+    this._m = new THREE.Matrix4();
+    this._q = new THREE.Quaternion();
+    this._v = new THREE.Vector3();
+    this._s = new THREE.Vector3();
+  }
+
+  update(list, night) {
+    const n = Math.min(this.max, list.length);
+    this.mesh.count = n;
+    for (let i = 0; i < n; i++) {
+      const l = list[i];
+      this._s.set(l.r * 2.2, 1, l.r * 2.2);
+      this._v.set(l.x, l.y + 0.04, l.z);
+      this._m.compose(this._v, this._q, this._s);
+      this._m.toArray(this.mesh.instanceMatrix.array, i * 16);
+    }
+    if (n) this.mesh.instanceMatrix.needsUpdate = true;
+    this.material.opacity = 0.42 * night;
+    this.mesh.visible = night > 0.06 && n > 0;
+  }
+}
+
 export class PuffPool {
   constructor(scene, capacity = 420) {
     this.capacity = capacity;

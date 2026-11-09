@@ -141,8 +141,12 @@ export function generateWorld(seed = WORLD.seed) {
     const { tier, index } = tierAt(t);
     const span = Math.max(0.001, tier.t1 - tier.t0);
     const y = tier.y - 0.5 * clamp01((t - tier.t0) / span) - 0.35 * clamp01(1 - (tier.t0 - t) / span);
-    const width = 1.95 + (noiseC.noise1(t * 6.1 + 21.0) * 0.5 + 0.5) * 1.25
-      + (noiseB.noise1(t * 12.0 + 3.0) * 0.5 + 0.5) * 0.55;
+    // Width breathes: riffles pinch, and a slow swell opens into real pools so
+    // the river is never a constant-width stripe.
+    const poolN = noiseD.noise1(t * 3.1 + 57.0) * 0.5 + 0.5;
+    const pool = smoothstep(0.52, 0.88, poolN) * 3.4;
+    const width = 2.15 + (noiseC.noise1(t * 6.1 + 21.0) * 0.5 + 0.5) * 1.15
+      + (noiseB.noise1(t * 12.0 + 3.0) * 0.5 + 0.5) * 0.5 + pool;
     river.push({ t, x, z, y, width, tier: index });
   }
   const sampleAtT = (t) => river[Math.round(clamp01(t) * STEPS)];
@@ -301,13 +305,17 @@ export function generateWorld(seed = WORLD.seed) {
     if (dist > sample.width + 9) { riverDist[i] = dist; continue; }
     riverDist[i] = dist;
     const halfW = sample.width;
-    const bank = smoothstep(halfW + 2.9, halfW * 0.3, dist);
-    const bed = sample.y - 1.45;
+    // Banks tuck in tighter than the old trench: the water surface is fitted to
+    // the terrain later, so the channel only needs to be as wide as the water
+    // plus a soft shoulder of wet sand.
+    const bank = smoothstep(halfW + 3.4, halfW * 0.40, dist);
+    const bed = sample.y - 1.6;
     const carve = Math.pow(bank, 1.35);
     let h = height[i];
     h = lerp(h, bed, carve);
     const scour = smoothstep(halfW + 2.2, halfW + 0.1, dist) * (1 - bank);
     h -= scour * 0.55;
+    // plunge pools: deepen the bed just downstream of every tier step
     height[i] = h;
     riverMask[i] = Math.max(riverMask[i], smoothstep(halfW + 2.6, halfW * 0.15, dist));
   }
@@ -546,15 +554,22 @@ export function generateWorld(seed = WORLD.seed) {
       grass = mix3(grass, PALETTE.grassSun, clamp01(smoothstep(0.1, 0.4, macro * 0.85 + meso * 0.36 + micro * 0.05)) * 0.9);
       // deep shadowed creases in the grass
       grass = mix3(grass, PALETTE.grassShade, clamp01(smoothstep(0.28, 0.6, slope)) * 0.62);
-      grass = mix3(grass, PALETTE.grassDark, clamp01(smoothstep(0.02, 0.3, -macro - meso * 0.2)) * 0.55);
+      grass = mix3(grass, PALETTE.grassDark, clamp01(smoothstep(0.02, 0.3, -macro - meso * 0.2)) * 0.65);
       // sun-bleached higher ground
-      grass = mix3(grass, PALETTE.grassSun, clamp01(smoothstep(0.25, 0.6, shadeN)) * 0.18);
+      grass = mix3(grass, PALETTE.grassSun, clamp01(smoothstep(0.25, 0.6, shadeN)) * 0.30);
+
+      // ---- river banks keep their grass: bare dirt cliffs read as erosion
+      if (rm > 0.02) {
+        const bankGrass = smoothstep(0.02, 0.30, rm) * 0.62 * (1 - smoothstep(0.55, 0.82, slope));
+        grass = mix3(grass, PALETTE.grassMid, bankGrass * 0.7);
+      }
 
       // ---- bare earth patches: brush-stroke ochre
       const patchN = noiseD.fbm(wx * 0.043 + 11.0, wz * 0.043 - 5.0, 3) * 0.5 + 0.5;
       const patchEdge = noiseC.noise(wx * 0.24, wz * 0.24) * 0.05;
-      const patch = clamp01(smoothstep(0.565, 0.675, patchN + patchEdge)) * (1.0 - smoothstep(0.24, 0.46, slope));
-      let col = mix3(grass, PALETTE.dirtLight, patch * 0.88);
+      let patch = clamp01(smoothstep(0.55, 0.71, patchN + patchEdge)) * (1.0 - smoothstep(0.24, 0.46, slope));
+      patch *= 1.0 - 0.85 * smoothstep(0.02, 0.35, rm);
+      let col = mix3(grass, PALETTE.dirtLight, patch * 0.80);
       col = mix3(col, PALETTE.dirtMid, patch * clamp01(smoothstep(0.15, 0.75, meso + 0.4)) * 0.55);
 
       // ---- trail
@@ -572,7 +587,7 @@ export function generateWorld(seed = WORLD.seed) {
       // ---- painterly mottle: break the flat wash into brush-ish patches
       const brush = noiseB.fbm(wx * 0.38, wz * 0.38, 2);
       const blotch = noiseA.fbm(wx * 0.11 + 21.0, wz * 0.11 - 13.0, 2);
-      const mottle = 1.0 + brush * 0.052 + blotch * 0.045;
+      const mottle = 1.0 + brush * 0.065 + blotch * 0.052;
       col = [col[0] * mottle, col[1] * (mottle + blotch * 0.02), col[2] * (mottle - blotch * 0.03)];
 
       // ---- exposed stone on the cliff risers, with horizontal strata
@@ -667,7 +682,7 @@ function buildWaterPieces(river) {
 function scatterProps(ctx) {
   const { heightAt, slopeAt, pathAt, riverAt, riverDistAt, plot, rng, noiseA, noiseB, noiseC, noiseD } = ctx;
   const HALF = WORLD.size / 2;
-  const trees = [], rocks = [], bushes = [], tufts = [], ferns = [], logs = [], stumps = [];
+  const trees = [], rocks = [], bushes = [], tufts = [], ferns = [], logs = [], stumps = [], reeds = [];
 
   const claimed = new Map();
   const occupied = (x, z, radius) => {
@@ -729,6 +744,7 @@ function scatterProps(ctx) {
     const edge = Math.max(Math.abs(x), Math.abs(z)) / HALF;
     const pineBias = noiseD.fbm(x * 0.05, z * 0.05, 2) * 0.5 + 0.5;
     const isPine = edge > 0.6 ? rng() < 0.85 : pineBias > 0.66 ? rng() < 0.55 : rng() < 0.1;
+    if (!isPine && rng() < 0.22) { makeTree(x, z, 'birch', 0.75 + rng() * 0.55); return; }
     makeTree(x, z, isPine ? 'pine' : 'broad', 0.8 + rng() * 0.7);
   });
 
@@ -827,6 +843,25 @@ function scatterProps(ctx) {
     });
   }
 
+  // Reeds & cattails: a soft fringe where the water meets the bank. They are
+  // the single strongest cue that the river is wet rather than a painted ditch.
+  for (let i = 0; i < 14000 && reeds.length < 1500; i++) {
+    const x = (rng() * 2 - 1) * (HALF - 2.0);
+    const z = (rng() * 2 - 1) * (HALF - 2.0);
+    const rm = riverAt(x, z);
+    if (rm < 0.30 || rm > 0.97) continue;
+    if (slopeAt(x, z) > 0.52) continue;
+    const clump = noiseC.fbm(x * 0.24 + 9.0, z * 0.24 - 3.0, 2) * 0.5 + 0.5;
+    if (rng() > 0.30 + clump * 0.66) continue;
+    reeds.push({
+      x, y: heightAt(x, z) - 0.06, z,
+      scale: 0.7 + rng() * 0.85,
+      rot: rng() * Math.PI * 2,
+      variant: rng() > 0.62 ? 1 : 0,
+      hue: rng(),
+    });
+  }
+
   // Deadfall
   scatterWith(900, (x, z) => {
     if (inPlot(x, z, 2.5)) return false;
@@ -843,7 +878,7 @@ function scatterProps(ctx) {
     claim(x, z, 1.2);
   });
 
-  return { trees, rocks, bushes, tufts, ferns, logs, stumps };
+  return { trees, rocks, bushes, tufts, ferns, logs, stumps, reeds };
 }
 
 // ---------------------------------------------------------------------------

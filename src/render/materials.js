@@ -318,17 +318,138 @@ export function createSolidMaterial(opts = {}) {
 // ---------------------------------------------------------------------------
 // Water
 // ---------------------------------------------------------------------------
+/**
+ * Painted river water. The surface carries its own story in `aFoam`: white
+ * chutes on the falls, turbulent plunge pools, calm glassy runs. The shader
+ * layers depth tone, dragged tree reflections, current lines, sparkles, bank
+ * lace and a sky sheen — and it respects the day cycle, so at midnight the
+ * river goes dark and moonlit instead of glowing like paper.
+ */
 export function createWaterMaterial(opts = {}) {
   return new THREE.ShaderMaterial({
     uniforms: {
       ...commonUniforms(),
-      uDeep: { value: new THREE.Color(0.224, 0.243, 0.157) },
-      uShallow: { value: new THREE.Color(0.392, 0.376, 0.251) },
-      uFoam: { value: new THREE.Color(0.702, 0.682, 0.529) },
-      uStroke: { value: new THREE.Color(0.145, 0.169, 0.106) },
+      uDeep: { value: new THREE.Color(0.263, 0.298, 0.208) },
+      uShallow: { value: new THREE.Color(0.580, 0.545, 0.345) },
+      uFoam: { value: new THREE.Color(0.880, 0.860, 0.700) },
+      uStroke: { value: new THREE.Color(0.190, 0.230, 0.150) },
+      uSky: { value: new THREE.Color(0.70, 0.68, 0.56) },
       uFlow: { value: opts.flow ?? 0.35 },
-      uFall: { value: opts.fall ? 1 : 0 },
       uOpacity: { value: 1 },
+    },
+    vertexShader: /* glsl */`
+      attribute float aFoam;
+      uniform float uTime;
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying float vDist;
+      varying float vFoam;
+      void main() {
+        vUv = uv;
+        vFoam = aFoam;
+        vec4 wp = modelMatrix * vec4(position, 1.0);
+        // gentle swell on the runs; the chutes stay flat and fast
+        float calm = 1.0 - clamp(aFoam, 0.0, 1.0);
+        wp.y += (sin(wp.x * 0.85 + wp.z * 0.62 + uTime * 1.5) * 0.026
+               + sin(wp.x * 1.9 - wp.z * 1.3 - uTime * 2.2) * 0.014) * calm;
+        vWorld = wp.xyz;
+        vec4 mv = viewMatrix * wp;
+        vDist = -mv.z;
+        gl_Position = projectionMatrix * mv;
+      }
+    `,
+    fragmentShader: COMMON_GLSL + /* glsl */`
+      uniform vec3 uDeep;
+      uniform vec3 uShallow;
+      uniform vec3 uFoam;
+      uniform vec3 uStroke;
+      uniform vec3 uSky;
+      uniform float uFlow;
+      uniform float uOpacity;
+      varying vec2 vUv;
+      varying vec3 vWorld;
+      varying float vDist;
+      varying float vFoam;
+
+      vec3 waterLight(vec3 col, float day) {
+        float l = dot(col, vec3(0.299, 0.587, 0.114));
+        col = mix(vec3(l), col, 1.12);
+        col *= 0.52 + 0.58 * day;
+        col += vec3(0.008, 0.012, 0.014) * (0.4 + 0.6 * day);
+        return col;
+      }
+
+      void main() {
+        float t = uTime;
+        vec2 uv = vUv;
+        float foam = clamp(vFoam, 0.0, 1.0);
+        float day = 1.0 - uNightMix;
+        // white water races: stretch the noise along the flow and run it fast
+        float speed = uFlow * (0.5 + foam * 2.6);
+        float flow = uv.y - t * speed;
+
+        float edge = min(uv.x, 1.0 - uv.x);
+        float depthBand = smoothstep(0.0, 0.16, edge);
+
+        // --- one clean depth wash: pale shoulder, deep midstream
+        vec3 col = mix(uShallow, uDeep, depthBand);
+
+        // --- broad swell: two slow octaves, thresholded into painted bands
+        float swell = vnoise(vec2(uv.x * 2.2 + 1.3, flow * 1.1)) * 0.65
+                    + vnoise(vec2(uv.x * 4.5 - 2.1, flow * 1.9)) * 0.35;
+        col = mix(col, uDeep * 0.80, smoothstep(0.62, 0.92, swell) * 0.22 * depthBand);
+
+        // --- long current strokes: a few dark brushes following the flow
+        float ln = vnoise(vec2(uv.x * 7.0 + 4.0, flow * 1.3));
+        col = mix(col, uStroke, smoothstep(0.58, 0.84, ln) * 0.55 * depthBand * (1.0 - foam * 0.7));
+
+        // --- sky sheen: the pale wash the reference rivers hold midstream
+        float sheen = smoothstep(0.52, 0.90, swell * 0.5 + ln * 0.5) * depthBand;
+        col = mix(col, uSky * (0.35 + 0.65 * day), sheen * 0.22 * (1.0 - foam));
+
+        // --- cream highlights: sparse, flat, hard-edged like gouache
+        float hi = vnoise(vec2(uv.x * 3.5 + 9.0, flow * 1.0));
+        col = mix(col, uFoam * (0.55 + 0.55 * day), smoothstep(0.90, 0.985, hi) * 0.30 * depthBand);
+
+        // --- sparkles: tiny and rare; at night they turn to moon glints
+        float glint = smoothstep(0.965, 0.999, vnoise(vec2(uv.x * 14.0, flow * 8.0)));
+        vec3 glintCol = mix(vec3(0.62, 0.70, 0.82), uFoam, day);
+        col += glintCol * glint * (0.18 + 0.24 * day) * depthBand;
+
+        // --- white water: chute and plunge pool boil into foam
+        if (foam > 0.01) {
+          float vs = vnoise(vec2(uv.x * 6.0 + 3.0, flow * 2.2));
+          float vs2 = vnoise(vec2(uv.x * 7.0 + 2.0, flow * 3.5));
+          float boil = smoothstep(0.30, 0.80, vs * 0.6 + vs2 * 0.5);
+          float amt = foam * (0.42 + 0.58 * boil);
+          col = mix(col, uFoam * (0.55 + 0.55 * day), amt);
+          col = mix(col, uStroke * 1.05, foam * smoothstep(0.78, 0.98, vs2) * 0.20);
+        }
+
+        // --- cream lace along both banks
+        float lace = smoothstep(0.055, 0.0, edge) * (0.45 + 0.55 * vnoise(vec2(uv.y * 26.0 - t * 1.2, 3.0)));
+        col = mix(col, uFoam * (0.5 + 0.6 * day), clamp(lace, 0.0, 0.6));
+
+        vec3 lit = waterLight(col, day);
+        lit = applyFog(lit, vDist);
+        gl_FragColor = vec4(lit, uOpacity);
+      }
+    `,
+    transparent: false,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Splash: the boiling disc sitting in every plunge pool. Radial foam that
+// spins slowly and fades to nothing at the rim — replaces the old axis-aligned
+// foam rectangles, which read as paper laid on the ground.
+// ---------------------------------------------------------------------------
+export function createSplashMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      ...commonUniforms(),
+      uFoam: { value: new THREE.Color(0.83, 0.82, 0.68) },
+      uWet: { value: new THREE.Color(0.30, 0.32, 0.22) },
     },
     vertexShader: /* glsl */`
       varying vec2 vUv;
@@ -344,82 +465,31 @@ export function createWaterMaterial(opts = {}) {
       }
     `,
     fragmentShader: COMMON_GLSL + /* glsl */`
-      uniform vec3 uDeep;
-      uniform vec3 uShallow;
       uniform vec3 uFoam;
-      uniform vec3 uStroke;
-      uniform float uFlow;
-      uniform float uFall;
-      uniform float uOpacity;
+      uniform vec3 uWet;
       varying vec2 vUv;
       varying vec3 vWorld;
       varying float vDist;
-
-      // Painted water. Water is the brightest thing in the reference frames:
-      // it holds the sky, breaks into cream where it moves fast, and is cut by
-      // dark strokes that follow the current. It gets its own lighting model
-      // rather than the moss ramp, because a river lit like soil looks like a
-      // plank of wood lying on the ground.
-      vec3 waterLight(vec3 col) {
-        float l = dot(col, vec3(0.299, 0.587, 0.114));
-        col = mix(vec3(l), col, 1.04);
-        col *= 1.02;
-        col += vec3(0.018, 0.022, 0.014);
-        return col;
-      }
-
       void main() {
+        vec2 p = vUv * 2.0 - 1.0;
+        float r = length(p);
+        if (r > 1.0) discard;
         float t = uTime;
-        vec2 uv = vUv;
-        float flow = uv.y - t * uFlow * 0.5;
-
-        // low frequency only: high frequency noise aliases into gravel
-        float swell = vnoise(vec2(uv.x * 3.0 - 1.0, flow * 5.0));
-        float current = vnoise(vec2(uv.x * 11.0, flow * 9.0));
-        float chop = vnoise(vec2(uv.x * 21.0 + 5.0, flow * 17.0));
-
-        float edge = min(uv.x, 1.0 - uv.x);
-        float depthBand = smoothstep(0.0, 0.12, edge);
-
-        vec3 col = mix(uShallow, uDeep, depthBand * (0.85 + 0.15 * swell));
-        // --- long reflections: the trees on the far bank are dragged down
-        // the surface as soft dark columns. In the reference the river is
-        // mostly reflection, not sky.
-        vec2 rp = vec2(uv.x * 1.6, flow * 0.55);
-        float refl = vnoise(rp) * 0.55 + vnoise(rp * 2.3 + 7.0) * 0.3 + vnoise(rp * 5.1 - 3.0) * 0.15;
-        float columns = smoothstep(0.34, 0.78, refl);
-        col = mix(col, uStroke * 1.15, columns * 0.42 * (0.35 + 0.65 * depthBand));
-        // the sunlit middle of the current, warm and pale
-        col += uFoam * 0.14 * smoothstep(0.5, 0.95, swell) * depthBand;
-        col = mix(col, uFoam * 1.04, smoothstep(0.72, 0.95, swell) * 0.22);
-        // --- long current lines
-        float lines = smoothstep(0.55, 0.95, current * 0.65 + chop * 0.4);
-        col += uFoam * lines * 0.26;
-        // --- dark brush drag, thin and directional
-        float drag = smoothstep(0.66, 0.94, chop * 0.55 + current * 0.5);
-        col = mix(col, uStroke, drag * 0.40);
-        // --- sparkles travel with the flow and are hard-edged
-        float glint = smoothstep(0.92, 0.998, chop * 0.6 + current * 0.55);
-        col += uFoam * glint * 0.55;
-        // --- cream lace along both banks
-        float lace = smoothstep(0.06, 0.0, edge) * (0.45 + 0.55 * vnoise(vec2(uv.y * 26.0 - t * 1.2, 3.0)));
-        col = mix(col, uFoam, clamp(lace, 0.0, 0.55));
-
-        if (uFall > 0.5) {
-          float vs = vnoise(vec2(uv.x * 18.0, uv.y * 3.0 - t * 3.0));
-          float vs2 = vnoise(vec2(uv.x * 34.0 + 2.0, uv.y * 6.0 - t * 4.6));
-          float curtain = smoothstep(0.32, 0.85, vs * 0.65 + vs2 * 0.5);
-          col = mix(uShallow, uFoam, 0.45 + curtain * 0.5);
-          col = mix(col, uFoam, smoothstep(0.28, 0.0, uv.y) * 0.5);
-          col = mix(col, uStroke, smoothstep(0.6, 0.95, vs2) * 0.16);
-        }
-
-        vec3 lit = waterLight(col);
+        float n = vnoise(vec2(p.x * 5.0 + t * 0.7, p.y * 5.0 - t * 0.9)) * 0.6
+                + vnoise(vec2(p.x * 11.0 - t * 1.3, p.y * 11.0 + t * 1.1)) * 0.4;
+        float body = smoothstep(1.0, 0.25, r + (n - 0.5) * 0.55);
+        float boil = smoothstep(0.45, 0.9, n) * body;
+        float day = 1.0 - uNightMix;
+        vec3 col = mix(uWet, uFoam * (0.5 + 0.6 * day), 0.35 + 0.65 * boil);
+        col += uFoam * smoothstep(0.72, 0.98, n) * 0.35 * body;
+        float a = body * (0.55 + 0.4 * boil);
+        vec3 lit = col * (0.5 + 0.6 * day) + vec3(0.02, 0.025, 0.03);
         lit = applyFog(lit, vDist);
-        gl_FragColor = vec4(lit, uOpacity);
+        gl_FragColor = vec4(lit, a);
       }
     `,
-    transparent: false,
+    transparent: true,
+    depthWrite: false,
   });
 }
 

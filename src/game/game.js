@@ -9,7 +9,7 @@ import { generateWorld, WORLD } from '../terrain/terrain.js';
 import { buildTerrainMesh } from '../render/terrainMesh.js';
 import { Vegetation } from '../render/vegetation.js';
 import { WaterSystem } from '../render/water.js';
-import { Fireflies, Mist, PuffPool } from '../render/effects.js';
+import { Fireflies, Mist, PuffPool, LanternGlow } from '../render/effects.js';
 import { Player } from './player.js';
 import { BuildSystem, SHAPES, PAINTS, SHAPE_BY_ID, PAINT_BY_ID, TOOLS, CELL, LAYER } from './build.js';
 import { Audio } from './audio.js';
@@ -17,10 +17,10 @@ import { saveGame, loadGame, clearSave, saveSettings, loadSettings } from './sav
 
 
 const NODE_YIELD = {
-  tree: { wood: 2 },
-  rock: { stone: 2 },
-  bush: { fiber: 2 },
-  log: { wood: 3 },
+  tree: { wood: 3 },
+  rock: { stone: 3 },
+  bush: { fiber: 3 },
+  log: { wood: 4 },
 };
 
 const REACH = 2.9;
@@ -107,6 +107,7 @@ export class Game {
     this.water = new WaterSystem(this.engine.scene, this.world);
     this.fireflies = new Fireflies(this.engine.scene, this.world, this.engine.quality > 0 ? 300 : 160);
     this.mist = new Mist(this.engine.scene, this.world);
+    this.lanternGlow = new LanternGlow(this.engine.scene);
     this.puffs = new PuffPool(this.engine.scene, this.engine.quality > 0 ? 460 : 240);
     this.effects = {
       dust: (x, y, z, scale = 1) => this.spawnDust(x, y, z, scale),
@@ -118,7 +119,7 @@ export class Game {
     ui.setLoading(0.94, 'Waking the wanderer…');
     await nextFrame();
     this.player = new Player(this.engine.scene, this.world);
-    this.resources = { wood: 14, stone: 6, fiber: 8 };
+    this.resources = { wood: 24, stone: 12, fiber: 12 };
     this.building = false;
     this.build = new BuildSystem(this.engine.scene, this.world, {
       getResources: () => this.resources,
@@ -166,6 +167,13 @@ export class Game {
     // restore an existing save
     if (save) {
       if (save.resources) Object.assign(this.resources, save.resources);
+      // one-time relief: saves from before the economy rework could strand a
+      // player at zero materials with nothing left to gather
+      if ((save.v ?? 0) < 4) {
+        this.resources.wood = Math.max(this.resources.wood, 24);
+        this.resources.stone = Math.max(this.resources.stone, 12);
+        this.resources.fiber = Math.max(this.resources.fiber, 12);
+      }
       if (save.pieces?.length) this.build.restore(save.pieces);
       if (save.player) {
         this.player.position.set(save.player.x, this.world.heightAt(save.player.x, save.player.z), save.player.z);
@@ -298,7 +306,7 @@ export class Game {
     }
 
     // gather node?
-    const node = this.nodeAt(p.x, p.z, 2.0);
+    const node = this.nodeAt(p.x, p.z, 2.6);
     if (node) {
       this.requestGather(node);
     } else {
@@ -368,8 +376,8 @@ export class Game {
 
     node.remaining -= 1;
     if (node.remaining <= 0) {
-      node.remaining = 3;
-      node.cooling = now + 34000;
+      node.remaining = 4;
+      node.cooling = now + 20000;
     }
     this.pendingNode = null;
   }
@@ -398,6 +406,11 @@ export class Game {
 
   pickShape(id) {
     if (!SHAPE_BY_ID[id]) return;
+    const cost = this.build.costFor(id, this.build.paintId);
+    if (!this.build.canPay(cost)) {
+      const need = Object.entries(cost).map(([k, v]) => `${v} ${k}`).join(', ');
+      this.ui.hint(`Needs ${need} — tap trees, boulders and bushes to gather`, 3200);
+    }
     this.build.setTool('build');
     this.build.setShape(id);
     this.building = true;
@@ -586,7 +599,7 @@ export class Game {
     }
 
     // hover ring on the closest gatherable
-    let closest = null, cd = 3.4;
+    let closest = null, cd = 3.8;
     for (const n of this.nodes) {
       const d = Math.hypot(n.x - this.player.x, n.z - this.player.z);
       if (d < cd) { cd = d; closest = n; }
@@ -615,6 +628,16 @@ export class Game {
     }
 
     this.build.update(dt, night);
+    // lanterns give light back: emissive heads + a warm pool on the ground
+    for (const g of this.build.glowMats || []) {
+      const k = (g.kind === 'window' ? 0.50 : 0.30) * night;
+      g.mat.uniforms.uEmissive.value.setRGB(k, k * 0.72, k * 0.32);
+    }
+    this.lanternTimer = (this.lanternTimer || 0) + dt;
+    if (this.lanternTimer > 0.4) {
+      this.lanternTimer = 0;
+      this.lanternGlow.update(this.build.lanternPositions(), night);
+    }
     this.vegetation.update(dt);
     this.vegetation.shadows?.setNight(night);
     this.puffs.update(dt);
@@ -640,7 +663,7 @@ export class Game {
       pieces: this.build.serialize(),
       player: { x: this.player.position.x, z: this.player.position.z },
       time: this.atmosphere.t,
-      v: 3,
+      v: 4,
     });
   }
 }
