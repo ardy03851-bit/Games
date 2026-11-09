@@ -16,9 +16,12 @@ The whole game is shaded by a handful of small hand-written GLSL programs that
 turn geometry into flat, painted bands rather than smooth PBR:
 
 * **four light bands** (`smoothstep` thresholds) instead of a lambert ramp
-* **no textures at all** — there is not a single photographic leaf in here.
-  Grass is thousands of painted blades, a bush is a dark core wrapped in leaf
-  lobes, a crown is a stack of lobes, a pine is a tower of jagged needle skirts
+* **no photographic textures anywhere** — every leaf, blade and bark stripe is
+  painted at runtime. Grass is thousands of painted blades, a bush is a dark
+  core wrapped in leaf lobes, a crown is a stack of sun-baked lobes wrapped in
+  brushed leaf cards, a pine is a tower of jagged needle skirts around a dark
+  core, and trunks carry root flares, branch stubs and striated bark (birches
+  get a pale dashed trunk of their own)
 * **baked horizon AO + soft contact shadows** under everything that stands up
 * **palette sampled directly from the reference paintings** (see
   `src/terrain/terrain.js` → `PALETTE`), with a slow painted mottle and
@@ -29,6 +32,18 @@ turn geometry into flat, painted bands rather than smooth PBR:
 Everything animates: every grass blade, frond, bush and tree sways on its own
 wind phase in the vertex shader — a slow gust plus a faster flutter, so the
 whole valley breathes instead of moving in lockstep.
+
+### The river
+Water is one continuous surface *fitted to the carved channel*: every
+cross-section marches sideways from the river spine until the ground rises
+above the waterline, so the surface meets its banks exactly. Pools open wide,
+riffles pinch, and each tier step becomes a white-water chute inside the same
+mesh — a per-vertex `aFoam` carries the boil down into the plunge pool, where a
+splash disc spins. The shader paints a clean depth wash, dragged bank
+reflections, current strokes that follow the flow, cream lace on the banks and
+moon glints at night (the river dims after dark instead of glowing). Reeds and
+cattails fringe every waterline, and contact shadows never float on the
+surface.
 
 ### The repaint pass
 
@@ -57,7 +72,10 @@ generated as geometry at runtime, with light and shadow baked into its tones.
 
 The player places them on a 1×1 grid, layer by layer (`+ / –`), turning them
 with `↻`. **Build** places, **Erase** takes a piece back and refunds it,
-**Repaint** recolours what is already standing, `↶ ↷` undo and redo. Dragging
+**Repaint** recolours what is already standing, `↶ ↷` undo and redo. Buildings
+give back: lanterns and windows light up after dusk and throw warm pools on
+the ground. Gathering is generous — trees, boulders, bushes and deadfall yield
+3–4 materials per harvest and rest for only twenty seconds. Dragging
 lays a whole run of pieces. Because pieces are instanced per (shape, paint)
 pair, a thousand-piece castle is still a dozen draw calls.
 

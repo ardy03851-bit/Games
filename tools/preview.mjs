@@ -346,42 +346,77 @@ function shadePixel(A, B, C, w0, w1, w2, mode, idxp) {
   let cr = A.c[0] * w0 + B.c[0] * w1 + C.c[0] * w2;
   let cg = A.c[1] * w0 + B.c[1] * w1 + C.c[1] * w2;
   let cb = A.c[2] * w0 + B.c[2] * w1 + C.c[2] * w2;
+  if (mode.kind === 'splash') {
+    const u = A.uv[0] * w0 + B.uv[0] * w1 + C.uv[0] * w2;
+    const v = A.uv[1] * w0 + B.uv[1] * w1 + C.uv[1] * w2;
+    const px = u * 2 - 1, py = v * 2 - 1;
+    const r = Math.hypot(px, py);
+    if (r > 1) return;
+    const dpt = pa.w * w0 + pb.w * w1 + pc.w * w2;
+    if (pa.z * w0 + pb.z * w1 + pc.z * w2 >= zbuf[idxp]) return;
+    const t = time;
+    const n = vnoise(px * 5 + t * 0.7, py * 5 - t * 0.9) * 0.6
+      + vnoise(px * 11 - t * 1.3, py * 11 + t * 1.1) * 0.4;
+    const body = smoothstep(1.0, 0.25, r + (n - 0.5) * 0.55);
+    const boil = smoothstep(0.45, 0.9, n) * body;
+    const foam = [0.83, 0.82, 0.68], wet = [0.30, 0.32, 0.22];
+    let cr = wet[0] + (foam[0] * 1.1 - wet[0]) * (0.35 + 0.65 * boil);
+    let cg = wet[1] + (foam[1] * 1.1 - wet[1]) * (0.35 + 0.65 * boil);
+    let cb = wet[2] + (foam[2] * 1.1 - wet[2]) * (0.35 + 0.65 * boil);
+    const bk = smoothstep(0.72, 0.98, n) * 0.35 * body;
+    cr += foam[0] * bk; cg += foam[1] * bk; cb += foam[2] * bk;
+    const a = body * (0.55 + 0.4 * boil);
+    cr = cr * 1.1 + 0.02; cg = cg * 1.1 + 0.025; cb = cb * 1.1 + 0.03;
+    const f = smoothstep(34, 118, dpt) * 0.8;
+    cr += (FOG[0] - cr) * f; cg += (FOG[1] - cg) * f; cb += (FOG[2] - cb) * f;
+    img[idxp * 3] += (cr - img[idxp * 3]) * a;
+    img[idxp * 3 + 1] += (cg - img[idxp * 3 + 1]) * a;
+    img[idxp * 3 + 2] += (cb - img[idxp * 3 + 2]) * a;
+    return;
+  }
   if (mode.kind === 'water') {
     const d = mode.data;
     const u = A.uv[0] * w0 + B.uv[0] * w1 + C.uv[0] * w2;
     const v = A.uv[1] * w0 + B.uv[1] * w1 + C.uv[1] * w2;
-    const flow = v - time * 0.175;
-    const swell = vnoise(u * 3 - 1, flow * 5);
-    const current = vnoise(u * 11, flow * 9);
-    const chop = vnoise(u * 21 + 5, flow * 17);
+    const foamV = Math.min(1, Math.max(0, A.f * w0 + B.f * w1 + C.f * w2));
+    const speed = 0.35 * (0.5 + foamV * 2.6);
+    const flow = v - time * speed;
     const edge = Math.min(u, 1 - u);
-    const depthBand = smoothstep(0.0, 0.12, edge);
-    const { deep, shallow, foam, stroke } = d;
-    let r = shallow[0] + (deep[0] - shallow[0]) * depthBand * (0.85 + 0.15 * swell);
-    let g = shallow[1] + (deep[1] - shallow[1]) * depthBand * (0.85 + 0.15 * swell);
-    let b = shallow[2] + (deep[2] - shallow[2]) * depthBand * (0.85 + 0.15 * swell);
-    const rp0 = u * 1.6, rp1 = flow * 0.55;
-    const refl = vnoise(rp0, rp1) * 0.55 + vnoise(rp0 * 2.3 + 7, rp1 * 2.3 + 7) * 0.3 + vnoise(rp0 * 5.1 - 3, rp1 * 5.1 - 3) * 0.15;
-    const columns = smoothstep(0.34, 0.78, refl) * 0.42 * (0.35 + 0.65 * depthBand);
-    r += (stroke[0] * 1.15 - r) * columns;
-    g += (stroke[1] * 1.15 - g) * columns;
-    b += (stroke[2] * 1.15 - b) * columns;
-    const warm = 0.14 * smoothstep(0.5, 0.95, swell) * depthBand;
-    r += foam[0] * warm; g += foam[1] * warm; b += foam[2] * warm;
-    const sky = smoothstep(0.72, 0.95, swell) * 0.22;
-    r += (foam[0] * 1.04 - r) * sky; g += (foam[1] * 1.04 - g) * sky; b += (foam[2] * 1.04 - b) * sky;
-    const lines = smoothstep(0.55, 0.95, current * 0.65 + chop * 0.4) * 0.26;
-    r += foam[0] * lines; g += foam[1] * lines; b += foam[2] * lines;
-    const drag = smoothstep(0.66, 0.94, chop * 0.55 + current * 0.5) * 0.40;
-    r += (stroke[0] - r) * drag; g += (stroke[1] - g) * drag; b += (stroke[2] - b) * drag;
-    const glint = smoothstep(0.92, 0.998, chop * 0.6 + current * 0.55) * 0.55;
+    const depthBand = smoothstep(0.0, 0.16, edge);
+    const { deep, shallow, foam, stroke, sky } = d;
+    const day = 1;
+    let r = shallow[0] + (deep[0] - shallow[0]) * depthBand;
+    let g = shallow[1] + (deep[1] - shallow[1]) * depthBand;
+    let b = shallow[2] + (deep[2] - shallow[2]) * depthBand;
+    const swell = vnoise(u * 2.2 + 1.3, flow * 1.1) * 0.65 + vnoise(u * 4.5 - 2.1, flow * 1.9) * 0.35;
+    const swk = smoothstep(0.62, 0.92, swell) * 0.22 * depthBand;
+    r += (deep[0] * 0.78 - r) * swk; g += (deep[1] * 0.78 - g) * swk; b += (deep[2] * 0.78 - b) * swk;
+    const ln = vnoise(u * 7 + 4, flow * 1.3);
+    const lnk = smoothstep(0.58, 0.84, ln) * 0.55 * depthBand * (1 - foamV * 0.7);
+    r += (stroke[0] - r) * lnk; g += (stroke[1] - g) * lnk; b += (stroke[2] - b) * lnk;
+    const sheen = smoothstep(0.52, 0.90, swell * 0.5 + ln * 0.5) * depthBand * 0.22 * (1 - foamV);
+    r += (sky[0] - r) * sheen; g += (sky[1] - g) * sheen; b += (sky[2] - b) * sheen;
+    const hi = vnoise(u * 3.5 + 9, flow * 1.0);
+    const hik = smoothstep(0.90, 0.985, hi) * 0.30 * depthBand;
+    r += (foam[0] * 1.1 - r) * hik; g += (foam[1] * 1.1 - g) * hik; b += (foam[2] * 1.1 - b) * hik;
+    const glint = smoothstep(0.965, 0.999, vnoise(u * 14, flow * 8)) * (0.18 + 0.24 * day) * depthBand;
     r += foam[0] * glint; g += foam[1] * glint; b += foam[2] * glint;
-    const lace = smoothstep(0.06, 0.0, edge) * (0.45 + 0.55 * vnoise(v * 26 - time * 1.2, 3)) * 0.55;
-    r += (foam[0] - r) * lace; g += (foam[1] - g) * lace; b += (foam[2] - b) * lace;
-    // water light
+    if (foamV > 0.01) {
+      const vs = vnoise(u * 6 + 3, flow * 2.2);
+      const vs2 = vnoise(u * 7 + 2, flow * 3.5);
+      const boil = smoothstep(0.30, 0.80, vs * 0.6 + vs2 * 0.5);
+      const amt = foamV * (0.42 + 0.58 * boil);
+      r += (foam[0] * 1.1 - r) * amt; g += (foam[1] * 1.1 - g) * amt; b += (foam[2] * 1.1 - b) * amt;
+      const dk = foamV * smoothstep(0.78, 0.98, vs2) * 0.20;
+      r += (stroke[0] * 1.05 - r) * dk; g += (stroke[1] * 1.05 - g) * dk; b += (stroke[2] * 1.05 - b) * dk;
+    }
+    const lace = smoothstep(0.055, 0.0, edge) * (0.45 + 0.55 * vnoise(v * 26 - time * 1.2, 3));
+    const laceK = Math.min(lace, 0.6);
+    r += (foam[0] * 1.1 - r) * laceK; g += (foam[1] * 1.1 - g) * laceK; b += (foam[2] * 1.1 - b) * laceK;
+    // water light (day)
     const lw = 0.299 * r + 0.587 * g + 0.114 * b;
-    r = lw + (r - lw) * 1.04; g = lw + (g - lw) * 1.04; b = lw + (b - lw) * 1.04;
-    r = r * 1.16 + 0.045; g = g * 1.16 + 0.050; b = b * 1.16 + 0.032;
+    r = lw + (r - lw) * 1.12; g = lw + (g - lw) * 1.12; b = lw + (b - lw) * 1.12;
+    r = r * 1.10 + 0.008; g = g * 1.10 + 0.012; b = b * 1.10 + 0.014;
     const dpt = pa.w * w0 + pb.w * w1 + pc.w * w2;
     const f = smoothstep(34, 118, dpt) * 0.8;
     img[idxp * 3] = clamp01(r + (FOG[0] - r) * f);
@@ -434,10 +469,12 @@ function drawTri(A, B, C, mode) {
         const u = A.uv[0] * w0 + B.uv[0] * w1 + C.uv[0] * w2;
         const v = 1 - (A.uv[1] * w0 + B.uv[1] * w1 + C.uv[1] * w2);
         const tex = sampleTexture(mode.tex, u, v);
-        if (tex[3] < 0.42) continue;
+        const aTest = 0.35;
+        if (tex[3] < aTest) continue;
         zbuf[idxp] = z;
         vn.set(0.30, 0.86, 0.41).normalize();
-        const lit = light([tex[0], tex[1], tex[2]], vn, 0.86);
+        const br = mode.brightness + (1 - v) * 0.10;
+        const lit = light([tex[0] * br, tex[1] * br, tex[2] * br], vn, 0.86);
         const dpt = pa.w * w0 + pb.w * w1 + pc.w * w2;
         const f = smoothstep(34, 118, dpt) * 0.8;
         img[idxp * 3] = lit[0] + (FOG[0] - lit[0]) * f;
@@ -487,10 +524,12 @@ function drawGeometry(geo, m, mode) {
     v3a.fromBufferAttribute(pos, i).applyMatrix4(m);
     if (nor) vn.fromBufferAttribute(nor, i).transformDirection(m).normalize(); else vn.set(0, 1, 0);
     const c = col ? [col.getX(i), col.getY(i), col.getZ(i)] : [0.5, 0.5, 0.5];
+    const foa = geo.getAttribute('aFoam');
     verts.push({
       p: v3a.clone(), n: vn.clone(), c,
       uv: uv ? [uv.getX(i), uv.getY(i)] : [0, 0],
       ao: aoa ? aoa.getX(i) : 0.85,
+      f: foa ? foa.getX(i) : 0,
     });
   }
   for (let t = 0; t < count; t += 3) {
@@ -560,7 +599,7 @@ if (process.env.DEBUG) {
 }
 for (const cl of clusters) {
   let mode = { kind: 'solid' };
-  if (cl.material?.uniforms?.uWet) {
+  if (cl.material?.uniforms?.uEdge) {
     mode = { kind: 'bed' };
   } else if (cl.material?.uniforms?.uFlow) {
     const u = cl.material.uniforms;
@@ -572,11 +611,17 @@ for (const cl of clusters) {
         shallow: col(u.uShallow?.value),
         stroke: col(u.uStroke?.value),
         foam: col(u.uFoam?.value),
-        fall: u.uFall?.value > 0.5,
+        sky: col(u.uSky?.value),
       },
     };
+  } else if (cl.material?.uniforms?.uWet && cl.material?.uniforms?.uFoam) {
+    mode = { kind: 'splash' };
   } else if (cl.material?.uniforms?.uMap) {
-    mode = { kind: 'card', tex: cl.material.uniforms.uMap.value };
+    mode = {
+      kind: 'card',
+      tex: cl.material.uniforms.uMap.value,
+      brightness: cl.material.uniforms.uBrightness?.value ?? 1,
+    };
   } else if (cl.geo.getAttribute?.('aAO')) {
     mode = { kind: 'terrain' };
   }
@@ -661,7 +706,7 @@ if (POST) {
       let cb = b0 + (ab / ws - b0) * smear;
 
       const l = luma([cr, cg, cb]);
-      const q = Math.floor(l * 9 + 0.5) / 9;
+      const q = Math.floor(l * 13 + 0.5) / 13;
       const tg = Math.min(1.75, Math.max(0.55, q / Math.max(l, 0.0008)));
       cr += (cr * tg - cr) * flat; cg += (cg * tg - cg) * flat; cb += (cb * tg - cb) * flat;
 
@@ -678,6 +723,7 @@ if (POST) {
       cr *= 1 - 0.10 * liftW; cg *= 1; cb *= 1 + 0.06 * liftW;
       const gainW = smoothstep(0.45, 1.0, l2) * 0.85;
       cr *= 1 + 0.05 * gainW; cg *= 1; cb *= 1 - 0.07 * gainW;
+      cr = Math.min(1, cr); cg = Math.min(1, cg); cb = Math.min(1, cb);
       cr = cr + (cr * cr * (3 - 2 * cr) - cr) * 0.22;
       cg = cg + (cg * cg * (3 - 2 * cg) - cg) * 0.22;
       cb = cb + (cb * cb * (3 - 2 * cb) - cb) * 0.22;

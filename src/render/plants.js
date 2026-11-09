@@ -194,7 +194,7 @@ export function fernGeometry(seed = 2) {
  * carry the light (bright on the sun side, near-black underneath) plus a hint
  * of leaf-scale noise, so the surface reads as painted foliage.
  */
-function leafyMass({ lobes, seed, jitter = 0.3, dark, mid, light, radius = 1 }) {
+function leafyMass({ lobes, seed, jitter = 0.3, dark, mid, light, hi = null, radius = 1 }) {
   const painter = new Painter();
   const sun = new THREE.Vector3(-0.55, 0.72, 0.42).normalize();
   const v = new THREE.Vector3();
@@ -222,8 +222,10 @@ function leafyMass({ lobes, seed, jitter = 0.3, dark, mid, light, radius = 1 }) 
       const up = Math.max(0, n.y);
       let c = mix(dark, mid, Math.min(1, lit * 1.7));
       c = mix(c, light, Math.max(0, lit - 0.55) * 1.1 + Math.max(0, up - 0.5) * 0.35);
+      // sun-struck dabs on the very top of the crown, like the key art
+      if (hi) c = mix(c, hi, Math.max(0, lit - 0.78) * 1.7 + Math.max(0, up - 0.72) * 0.55);
       const leaf = hash(Math.round(fp.getX(k) * 6), Math.round(fp.getY(k) * 6 + i), Math.round(fp.getZ(k) * 6));
-      const j = 0.92 + leaf * 0.17;
+      const j = 0.90 + leaf * 0.22;
       cols[k * 3] = c[0] * j; cols[k * 3 + 1] = c[1] * j; cols[k * 3 + 2] = c[2] * j;
     }
     flat.setAttribute('aColor', new THREE.BufferAttribute(cols, 3));
@@ -240,22 +242,29 @@ export function bushGeometry(seed = 3) {
   ];
   // the blob sits on the ground, so lift it a little
   const geo = leafyMass({
-    lobes, seed, jitter: 0.34,
-    dark: P.grassDark, mid: P.grassDeep, light: P.grassMid,
+    lobes, seed, jitter: 0.36,
+    dark: P.grassDeep, mid: P.grassMid, light: P.grassLight,
+    hi: mix(P.grassLight, P.grassSun, 0.4),
   });
   geo.translate(0, 0.06, 0);
   return geo;
 }
 
 export function canopyGeometry(seed = 11) {
+  // A crown is a dome of lobes: a big heart, a ring of shoulders and a cap.
+  // Overlapping lobes with jittered rims give the scalloped silhouette the
+  // reference paintings have; the vertex paint carries the light.
   const lobes = [
-    [0, 0.58, 0, 0.66], [0.40, 0.42, 0.18, 0.52], [-0.38, 0.38, -0.20, 0.50],
-    [0.10, 0.30, -0.44, 0.44], [-0.14, 0.34, 0.42, 0.42], [0.34, 0.62, -0.30, 0.34],
+    [0, 0.60, 0, 0.62], [0.42, 0.42, 0.16, 0.46], [-0.40, 0.38, -0.18, 0.44],
+    [0.10, 0.32, -0.44, 0.40], [-0.14, 0.36, 0.42, 0.40], [0.32, 0.62, -0.28, 0.34],
+    [-0.30, 0.60, 0.26, 0.32], [0.02, 0.86, 0.02, 0.34],
   ];
   const geo = leafyMass({
-    lobes, seed, jitter: 0.32,
-    dark: P.grassDark, mid: P.grassDeep, light: P.grassLight,
+    lobes, seed, jitter: 0.40,
+    dark: P.grassShade, mid: P.grassMid, light: P.grassLight,
+    hi: mix(P.grassLight, P.grassSun, 0.55),
   });
+  geo.scale(1.0, 1.08, 1.0);
   return geo;
 }
 
@@ -305,6 +314,60 @@ export function pineGeometry({ layers = 8, seed = 5, height = 2.0, radius = 1.0 
     }
   }
   return biasNormals(p.build(), 0.40);
+}
+
+// ---------------------------------------------------------------------------
+// Reeds — the wet fringe along the waterline
+// ---------------------------------------------------------------------------
+/**
+ * A clump of tall blades leaning over the water, some carrying a cattail head.
+ * They sway harder than grass (bigger wind amplitude in the batch).
+ */
+export function reedGeometry(seed = 4, cattails = true) {
+  const p = new Painter();
+  const blades = 7;
+  for (let i = 0; i < blades; i++) {
+    const r = hash(seed, i, 1);
+    const r2 = hash(seed, i, 2);
+    addBlade(p, {
+      angle: (i / blades) * 2.2 - 1.1 + (r - 0.5) * 0.5,
+      lean: 0.10 + r2 * 0.22,
+      height: 0.8 + r * 0.55,
+      width: 0.030 + r2 * 0.012,
+      curve: 0.09,
+      cBase: mix(P.grassShade, P.grassDeep, 0.5),
+      cMid: mix(P.grassMid, P.grassLight, 0.35),
+      cTip: mix(P.grassLight, P.grassSun, 0.55),
+      seed: seed * 3.7 + i * 1.3,
+    });
+  }
+  if (cattails) {
+    for (let k = 0; k < 2; k++) {
+      const a = k * 2.4 + hash(seed, k, 5) * 1.2 - 0.6;
+      const h = 1.05 + hash(seed, k, 6) * 0.35;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      // stem
+      addBlade(p, {
+        angle: a, lean: 0.04, height: h, width: 0.014, curve: 0.02,
+        cBase: P.grassDeep, cMid: P.grassMid, cTip: P.grassMid,
+        seed: seed * 5.1 + k * 2.7,
+      });
+      // head: a little crossed cigar of quads at the top
+      const hx = ca * 0.04, hz = sa * 0.04;
+      const w = 0.045;
+      const head = P.barkDark;
+      const headHi = P.bark;
+      for (let q = 0; q < 2; q++) {
+        const ux = q === 0 ? 1 : 0, uz = q === 0 ? 0 : 1;
+        p.quad(
+          [hx - ux * w, h - 0.02, hz - uz * w], [hx + ux * w, h - 0.02, hz + uz * w],
+          [hx + ux * w * 0.7, h + 0.16, hz + uz * w * 0.7], [hx - ux * w * 0.7, h + 0.16, hz - uz * w * 0.7],
+          head, head, headHi, headHi,
+        );
+      }
+    }
+  }
+  return biasNormals(p.build(), 0.45);
 }
 
 // ---------------------------------------------------------------------------
@@ -435,7 +498,7 @@ export function leafCardSet({ count = 6, radius = 1, seed = 1, size = 0.6 } = {}
     const r3 = hash(seed, i, 6);
     // shell distribution: keep the cards out of the very centre
     const y = (i / Math.max(1, count - 1)) * 1.5 - 0.75 + (r - 0.5) * 0.25;
-    const ring = Math.sqrt(Math.max(0, 1 - y * y)) * (0.55 + r2 * 0.5);
+    const ring = Math.sqrt(Math.max(0, 1 - y * y)) * (0.62 + r2 * 0.40);
     const a = i * golden + r3 * 0.6;
     const ox = Math.cos(a) * ring * radius;
     const oz = Math.sin(a) * ring * radius;

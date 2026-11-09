@@ -59,6 +59,7 @@ export class BuildSystem {
     this.ghostMesh = null;
     this.setShape('block');
 
+    this.glowMats = [];
     this.tmp = new THREE.Matrix4();
     this.tmpQ = new THREE.Quaternion();
     this.tmpV = new THREE.Vector3();
@@ -195,7 +196,10 @@ export class BuildSystem {
     }
     const cost = this.costFor();
     if (!existing && !this.canPay(cost)) {
-      this.opts.onFeedback?.('not enough materials');
+      const res = this.opts.getResources?.() || {};
+      const missing = Object.entries(cost)
+        .filter(([k, v]) => (res[k] || 0) < v).map(([k]) => k).join(' and ');
+      this.opts.onFeedback?.(`not enough ${missing || 'materials'}`);
       return false;
     }
     if (!existing) this.pay(cost);
@@ -280,6 +284,7 @@ export class BuildSystem {
     if (!b) {
       const geo = shapeGeometry(shapeId, paintId);
       const mat = createInstancedSolidMaterial({ brightness: 1.02 });
+      if (shapeId === 'lantern' || shapeId === 'window') this.glowMats.push({ mat, kind: shapeId });
       const mesh = new THREE.InstancedMesh(geo, mat, 64);
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
@@ -331,6 +336,17 @@ export class BuildSystem {
     for (const [key, b] of this.batches) {
       if (!used.has(key)) b.mesh.count = 0;
     }
+  }
+
+  /** World positions of every placed lantern, for the night light pools. */
+  lanternPositions() {
+    const out = [];
+    for (const [k, v] of this.blocks) {
+      if (v.s !== 'lantern') continue;
+      const [cx, cy, cz] = unkey(k);
+      out.push({ x: cx * CELL, y: this.worldY(cx, cy, cz) + 0.08, z: cz * CELL, r: 2.3 });
+    }
+    return out;
   }
 
   // -- queries -------------------------------------------------------------

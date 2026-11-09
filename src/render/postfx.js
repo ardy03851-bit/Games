@@ -121,7 +121,7 @@ const COMPOSITE = /* glsl */ `
 
     // ---- soft posterisation: big flat washes, no visible banding ------------
     float l = luma(c);
-    float bands = 9.0;
+    float bands = 13.0;
     float q = floor(l * bands + 0.5) / bands;
     float target = q / max(l, 0.0008);
     c = mix(c, c * clamp(target, 0.55, 1.75), uFlat);
@@ -129,7 +129,7 @@ const COMPOSITE = /* glsl */ `
     // ---- canvas tooth -------------------------------------------------------
     float tooth = vnoise(vUv * uRes * 0.55) * 0.62 + vnoise(vUv * uRes * 1.7 + 31.0) * 0.38;
     float weave = sin(vUv.x * uRes.x * 0.62) * sin(vUv.y * uRes.y * 0.78);
-    c *= 1.0 + (tooth - 0.5) * uGrain + weave * uGrain * 0.22;
+    c *= 1.0 + (tooth - 0.5) * uGrain + weave * uGrain * 0.08;
     // a few dried-brush flecks that sit in the paint rather than on top of it
     float fleck = smoothstep(0.86, 1.0, vnoise(vUv * uRes * 0.17 + 9.0));
     c = mix(c, c * 1.12, fleck * 0.30);
@@ -144,7 +144,10 @@ const COMPOSITE = /* glsl */ `
     float l2 = clamp(luma(c), 0.0, 1.0);
     c = mix(c, c * uLift, (1.0 - smoothstep(0.02, 0.42, l2)) * 0.75);
     c = mix(c, c * uGain, smoothstep(0.45, 1.0, l2) * 0.85);
-    // gentle S-curve instead of a hard contrast
+    // gentle S-curve instead of a hard contrast. The curve is only valid on
+    // [0,1]: HDR pixels (lantern glass, sunlit foam) would otherwise fold
+    // per-channel into impossible hues, so shoulder them into range first.
+    c = min(c, vec3(1.0));
     c = mix(c, c * c * (3.0 - 2.0 * c), 0.22);
     // pull saturation toward the painting's muted greens
     float g = dot(c, vec3(0.3333));

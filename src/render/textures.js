@@ -124,7 +124,7 @@ export function paintLeafMass(o) {
   }
 
   // 3. sun-facing highlights on the upper-left of every lobe
-  for (let i = 0; i < dabs * 0.5; i++) {
+  for (let i = 0; i < dabs * 0.7; i++) {
     const lobe = lobes[(rnd() * lobes.length) | 0];
     const a = -2.2 + rnd() * 1.9;
     const r = Math.pow(rnd(), 0.5) * lobe.r * 0.85;
@@ -278,21 +278,29 @@ const cache = new Map();
 
 const LEAF_RECIPES = {
   canopyA: {
-    seed: 11, size: 192, spread: 0.33, dabs: 300,
-    dark: P.grassDeep, mid: P.grassMid, light: P.grassLight, highlight: P.grassSun,
+    seed: 11, size: 192, spread: 0.33, dabs: 340,
+    dark: P.grassDeep, mid: P.grassMid, light: P.grassLight,
+    highlight: mix3(P.grassLight, P.grassSun, 0.6),
   },
   canopyB: {
-    seed: 27, size: 192, spread: 0.35, dabs: 280,
-    dark: P.grassShade, mid: P.grassDeep, light: P.grassMid, highlight: P.grassLight,
+    seed: 27, size: 192, spread: 0.35, dabs: 320,
+    dark: P.grassDeep, mid: mix3(P.grassDeep, P.grassMid, 0.6), light: P.grassLight,
+    highlight: mix3(P.grassLight, P.grassSun, 0.4),
   },
   canopyC: {
-    seed: 43, size: 192, spread: 0.31, dabs: 320,
-    dark: P.pineMid, mid: P.pineLight, light: mix3(P.pineLight, P.grassLight, 0.55),
-    highlight: mix3(P.grassLight, P.grassSun, 0.4),
+    seed: 43, size: 192, spread: 0.31, dabs: 340,
+    dark: P.pineDark, mid: P.pineMid, light: P.pineLight,
+    highlight: mix3(P.pineLight, P.grassSun, 0.45),
+  },
+  birch: {
+    seed: 91, size: 192, spread: 0.34, dabs: 330,
+    dark: [0.300, 0.380, 0.160], mid: [0.460, 0.550, 0.230],
+    light: [0.600, 0.680, 0.300], highlight: [0.740, 0.800, 0.420],
   },
   bush: {
     seed: 61, size: 160, spread: 0.36, dabs: 300,
-    dark: P.grassDeep, mid: P.grassMid, light: P.grassLight, highlight: P.grassSun,
+    dark: P.grassDeep, mid: P.grassMid, light: P.grassLight,
+    highlight: mix3(P.grassLight, P.grassSun, 0.4),
   },
   fern: {
     seed: 77, size: 160, spread: 0.34, dabs: 220,
